@@ -57,6 +57,20 @@ inline Dst bitwiseCast(Src source) noexcept {
   return dest;
 }
 
+static bool extractValueFromConstOp(Operation *op, int32_t &indexValue) {
+  auto constOp = llvm::dyn_cast<spirv::ConstantOp>(op);
+  if (!constOp) {
+    return false;
+  }
+  auto valueAttr = constOp.value();
+  auto integerValueAttr = valueAttr.dyn_cast<IntegerAttr>();
+  if (!integerValueAttr) {
+    return false;
+  }
+  indexValue = integerValueAttr.getInt();
+  return true;
+}
+
 template <typename EnumClass>
 static ParseResult parseEnumAttribute(EnumClass &value, OpAsmParser *parser,
                                       OperationState *state) {
@@ -197,6 +211,136 @@ static LogicalResult verifyLoadStorePtrAndValTypes(LoadStoreOpTy op, Value *ptr,
 static void printNoIOOp(Operation *op, OpAsmPrinter *printer) {
   *printer << op->getName();
   printer->printOptionalAttrDict(op->getAttrs());
+}
+
+//===----------------------------------------------------------------------===//
+// spv.AccessChainOp
+//===----------------------------------------------------------------------===//
+
+static Type extractPtrTypeFromPtrToCompositeType(ArrayRef<Value *> indices,
+                                                 Type type, Location baseLoc) {
+  if (!indices.size()) {
+    return mlir::emitError(baseLoc, "'spv.AccessChain' op expected at least "
+                                    "one index for spv.AccessChain"),
+           nullptr;
+  }
+
+  auto ptrType = type.dyn_cast<spirv::PointerType>();
+  if (!ptrType) {
+    return mlir::emitError(baseLoc, "'spv.AccessChain' op expected a pointer "
+                                    "to composite type, but provided ")
+               << type,
+           nullptr;
+  }
+
+  auto resultType = ptrType.getPointeeType();
+  auto resultStorageClass = ptrType.getStorageClass();
+  int32_t index = 0;
+
+  for (auto indexSSA : indices) {
+    auto cType = resultType.dyn_cast<spirv::CompositeType>();
+    if (!cType) {
+      return mlir::emitError(
+                 baseLoc,
+                 "'spv.AccessChain' op cannot extract from non-composite type ")
+                 << resultType << " with index " << index,
+             nullptr;
+    }
+    index = 0;
+    if (resultType.isa<spirv::StructType>()) {
+      Operation *op = indexSSA->getDefiningOp();
+      if (!op) {
+        return mlir::emitError(baseLoc, "'spv.AccessChain' op index must be an "
+                                        "integer spv.constant to access "
+                                        "element of spv.struct"),
+               nullptr;
+      }
+
+      if (!extractValueFromConstOp(op, index)) {
+        return mlir::emitError(
+                   baseLoc,
+                   "'spv.AccessChain' index must be an integer spv.constant to "
+                   "access element of spv.struct, but provided ")
+                   << op->getName(),
+               nullptr;
+      }
+
+      if (index < 0 || static_cast<uint64_t>(index) >= cType.getNumElements()) {
+        return mlir::emitError(baseLoc, "'spv.AccessChain' op index ")
+                   << index << " out of bounds for " << type,
+               nullptr;
+      }
+    }
+    resultType = cType.getElementType(index);
+  }
+  return spirv::PointerType::get(resultType, resultStorageClass);
+}
+
+static ParseResult parseAccessChainOp(OpAsmParser *parser,
+                                      OperationState *state) {
+  OpAsmParser::OperandType ptrInfo;
+  SmallVector<OpAsmParser::OperandType, 4> indicesInfo;
+  Type type;
+  // TODO(denis0x0D): regarding to the spec an index must be any integer type,
+  // figure out how to use resolveOperand with a range of types and do not
+  // fail on first attempt.
+  Type indicesType = parser->getBuilder().getIntegerType(32);
+
+  if (parser->parseOperand(ptrInfo) ||
+      parser->parseOperandList(indicesInfo, OpAsmParser::Delimiter::Square) ||
+      parser->parseColonType(type) ||
+      parser->resolveOperand(ptrInfo, type, state->operands) ||
+      parser->resolveOperands(indicesInfo, indicesType, state->operands)) {
+    return failure();
+  }
+
+  Location baseLoc = state->operands.front()->getLoc();
+  SmallVector<Value *, 4> indices(state->operands.begin() + 1,
+                                  state->operands.end());
+
+  auto resultType =
+      extractPtrTypeFromPtrToCompositeType(indices, type, baseLoc);
+  if (!resultType) {
+    return failure();
+  }
+
+  state->addTypes(resultType);
+  return success();
+}
+
+static void print(spirv::AccessChainOp op, OpAsmPrinter *printer) {
+  *printer << spirv::AccessChainOp::getOperationName() << ' ' << *op.base_ptr()
+           << '[';
+  printer->printOperands(op.indices());
+  *printer << "] : " << op.base_ptr()->getType();
+}
+
+static LogicalResult verify(spirv::AccessChainOp accessChainOp) {
+  SmallVector<Value *, 4> indices;
+  for (auto indexSSA : accessChainOp.indices()) {
+    indices.push_back(indexSSA);
+  }
+
+  auto resultType = extractPtrTypeFromPtrToCompositeType(
+      indices, accessChainOp.base_ptr()->getType(), accessChainOp.getLoc());
+  if (!resultType) {
+    return failure();
+  }
+
+  auto providedResultType =
+      accessChainOp.getType().dyn_cast<spirv::PointerType>();
+  if (!providedResultType) {
+    return accessChainOp.emitOpError(
+               "result type must be a pointer, but provided")
+           << providedResultType;
+  }
+
+  if (resultType != providedResultType) {
+    return accessChainOp.emitOpError("invalid result type: expected ")
+           << resultType << ", but provided " << providedResultType;
+  }
+
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
