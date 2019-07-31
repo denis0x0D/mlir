@@ -480,6 +480,33 @@ def SPV_IAddOp : SPV_ArithmeticOp<"IAdd", SPV_Integer, [Commutative]> {
 
 // -----
 
+def SPV_IEqualOp : SPV_LogicalOp<"IEqual", [Commutative]> {
+  let summary = "Integer comparison for equality.";
+
+  let description = [{
+    Result Type must be a scalar or vector of Boolean type.
+
+     The type of Operand 1 and Operand 2  must be a scalar or vector of
+    integer type.  They must have the same component width, and they must
+    have the same number of components as Result Type.
+
+     Results are computed per component.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    [TODO]
+    ```
+
+    For example:
+
+    ```
+    [TODO]
+    ```
+  }];
+}
+
+// -----
+
 def SPV_IMulOp : SPV_ArithmeticOp<"IMul", SPV_Integer, [Commutative]> {
   let summary = "Integer multiplication of Operand 1 and Operand 2.";
 
@@ -500,6 +527,40 @@ def SPV_IMulOp : SPV_ArithmeticOp<"IMul", SPV_Integer, [Commutative]> {
     ``` {.ebnf}
     integer-scalar-vector-type ::= integer-type |
                                  `vector<` integer-literal `x` integer-type `>`
+    imul-op ::= ssa-id `=` `spv.IMul` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+
+    For example:
+
+    ```
+    %4 = spv.IMul %0, %1 : i32
+    %5 = spv.IMul %2, %3 : vector<4xi32>
+
+    ```
+  }];
+}
+
+// -----
+
+def SPV_INotEqualOp : SPV_LogicalOp<"INotEqual", [Commutative]> {
+  let summary = "Integer comparison for inequality.";
+
+  let description = [{
+    Result Type must be a scalar or vector of Boolean type.
+
+     The type of Operand 1 and Operand 2  must be a scalar or vector of
+    integer type.  They must have the same component width, and they must
+    have the same number of components as Result Type.
+
+     Results are computed per component.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    boolean-scalar-vector-type ::= boolean-type |
+                                 `vector<` integer-literal `x` boolean-type `>`
     imul-op ::= ssa-id `=` `spv.IMul` ssa-use, ssa-use
                           `:` integer-scalar-vector-type
     ```
@@ -625,6 +686,113 @@ def SPV_ReturnOp : SPV_Op<"Return", [Terminator]> {
 
 // -----
 
+def SPV_SDivOp : SPV_ArithmeticOp<"SDiv", SPV_Integer> {
+  let summary = "Signed-integer division of Operand 1 divided by Operand 2.";
+
+  let description = [{
+    Result Type must be a scalar or vector of integer type.
+
+     The type of Operand 1 and Operand 2  must be a scalar or vector of
+    integer type.  They must have the same number of components as Result
+    Type. They must have the same component width as Result Type.
+
+     Results are computed per component.  The resulting value is undefined
+    if Operand 2 is 0.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    execution-mode-op ::= `spv.SDiv` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+
+    For example:
+
+    ```
+    %4 = spv.SDiv %0, %1 : i32
+    %5 = spv.SDiv %2, %3 : vector<4xi32>
+
+    ```
+  }];
+}
+
+// -----
+
+def SPV_SModOp : SPV_ArithmeticOp<"SMod", SPV_Integer> {
+  let summary = [{
+    Signed remainder operation for the remainder whose sign matches the sign
+    of Operand 2.
+  }];
+
+  let description = [{
+    Result Type must be a scalar or vector of integer type.
+
+     The type of Operand 1 and Operand 2  must be a scalar or vector of
+    integer type.  They must have the same number of components as Result
+    Type. They must have the same component width as Result Type.
+
+     Results are computed per component.  The resulting value is undefined
+    if Operand 2 is 0.  Otherwise, the result is the remainder r of Operand
+    1 divided by Operand 2 where if r ≠ 0, the sign of r is the same as the
+    sign of Operand 2.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    execution-mode-op ::= ssa-id `=` `spv.SMod` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+    For example:
+
+    ```
+    %4 = spv.SMod %0, %1 : i32
+    %5 = spv.SMod %2, %3 : vector<4xi32>
+
+    ```
+  }];
+}
+
+// -----
+
+def SPV_SRemOp : SPV_ArithmeticOp<"SRem", SPV_Integer> {
+  let summary = [{
+    Signed remainder operation for the remainder whose sign matches the sign
+    of Operand 1.
+  }];
+
+  let description = [{
+    Result Type must be a scalar or vector of integer type.
+
+     The type of Operand 1 and Operand 2  must be a scalar or vector of
+    integer type.  They must have the same number of components as Result
+    Type. They must have the same component width as Result Type.
+
+     Results are computed per component.  The resulting value is undefined
+    if Operand 2 is 0.  Otherwise, the result is the remainder r of Operand
+    1 divided by Operand 2 where if r ≠ 0, the sign of r is the same as the
+    sign of Operand 1.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    execution-mode-op ::= ssa-id `=` `spv.SRem` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+    For example:
+
+    ```
+    %4 = spv.SRem %0, %1 : i32
+    %5 = spv.SRem %2, %3 : vector<4xi32>
+
+    ```
+  }];
+}
+
+// -----
+
 def SPV_StoreOp : SPV_Op<"Store", []> {
   let summary = "Store through a pointer.";
 
@@ -663,6 +831,70 @@ def SPV_StoreOp : SPV_Op<"Store", []> {
   );
 
   let results = (outs);
+}
+
+// -----
+
+def SPV_UDivOp : SPV_ArithmeticOp<"UDiv", SPV_Integer> {
+  let summary = "Unsigned-integer division of Operand 1 divided by Operand 2.";
+
+  let description = [{
+    Result Type must be a scalar or vector of integer type, whose Signedness
+    operand is 0.
+
+     The types of Operand 1 and Operand 2 both must be the same as Result
+    Type.
+
+     Results are computed per component.  The resulting value is undefined
+    if Operand 2 is 0.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    execution-mode-op ::= ssa-id `=` `spv.UDiv` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+    For example:
+
+    ```
+    %4 = spv.UDiv %0, %1 : i32
+    %5 = spv.UDiv %2, %3 : vector<4xi32>
+
+    ```
+  }];
+}
+
+// -----
+
+def SPV_UModOp : SPV_ArithmeticOp<"UMod", SPV_Integer> {
+  let summary = "Unsigned modulo operation of Operand 1 modulo Operand 2.";
+
+  let description = [{
+    Result Type must be a scalar or vector of integer type, whose Signedness
+    operand is 0.
+
+     The types of Operand 1 and Operand 2 both must be the same as Result
+    Type.
+
+     Results are computed per component.  The resulting value is undefined
+    if Operand 2 is 0.
+
+    ### Custom assembly form
+    ``` {.ebnf}
+    integer-scalar-vector-type ::= integer-type |
+                                 `vector<` integer-literal `x` integer-type `>`
+    execution-mode-op ::= ssa-id `=` `spv.UMod` ssa-use, ssa-use
+                          `:` integer-scalar-vector-type
+    ```
+    For example:
+
+    ```
+    %4 = spv.UMod %0, %1 : i32
+    %5 = spv.UMod %2, %3 : vector<4xi32>
+
+    ```
+  }];
 }
 
 // -----
