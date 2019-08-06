@@ -150,6 +150,15 @@ static void processVariable(spirv::VariableOp varOp) {
   }
 }
 
+static size_t getMemorySize(std::unordered_map<int, std::vector<int32_t>> &vars) {
+  size_t count = 0;
+  for (auto var : vars) {
+    // TODO: Here should be a type.
+    count += var.second.size() * sizeof(int32_t);
+  }
+  return count;
+}
+
 static void processModule(spirv::ModuleOp module,
                           std::unordered_map<int, std::vector<int32_t>> &vars) {
 
@@ -200,16 +209,7 @@ static void processModule(spirv::ModuleOp module,
     VkPhysicalDeviceMemoryProperties properties;
 
     vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
-
-    const size_t K = 128;
-    const int32_t bufferLength = K;
-    const uint32_t bufferSize = sizeof(int32_t) * bufferLength;
-
-    // we are going to need two buffers from this one memory
-    const VkDeviceSize memorySize = bufferSize;
-
-    // set memoryTypeIndex to an invalid entry in the properties.memoryTypes
-    // array
+    const VkDeviceSize memorySize = getMemorySize(vars);
     uint32_t memoryTypeIndex = VK_MAX_MEMORY_TYPES;
 
     for (uint32_t k = 0; k < properties.memoryTypeCount; k++) {
@@ -251,15 +251,11 @@ static void processModule(spirv::ModuleOp module,
     BAIL_ON_BAD_RESULT(
         vkMapMemory(device, memory3, 0, memorySize, 0, (void **)&payload3));
 
-    // Init 2D tensors.
-    for (int i = 0; i < K; ++i) {
-      payload2[i] = 1;
-      payload3[i] = 3;
-      payload1[i] = 0;
-    }
     vkUnmapMemory(device, memory1);
     vkUnmapMemory(device, memory2);
     vkUnmapMemory(device, memory3);
+
+    const size_t bufferSize = 1024;
 
     const VkBufferCreateInfo bufferCreateInfo = {
         VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -283,18 +279,14 @@ static void processModule(spirv::ModuleOp module,
         vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer3));
     BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer3, memory3, 0));
 
-    // Read the shader from file.
     size_t size = 0;
-    // Hardcoded path to binary shader.
     uint32_t *shader_ptr = nullptr;
-
     VkShaderModuleCreateInfo shaderModuleCreateInfo = {
         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, 0, 0, size, shader_ptr};
     VkShaderModule shader_module;
     // Create Shader Module.
     BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shaderModuleCreateInfo, 0,
                                             &shader_module));
-
     VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[3] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT,
          0},
