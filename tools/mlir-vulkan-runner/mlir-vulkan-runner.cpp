@@ -37,6 +37,7 @@
 #include "mlir/IR/Module.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/StringExtras.h"
 #include "mlir/Translation.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -53,10 +54,23 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
+static void processVariable(spirv::VariableOp varOp) {
+  auto descriptorSetName =
+      convertToSnakeCase(stringifyDecoration(spirv::Decoration::DescriptorSet));
+  auto bindingName =
+      convertToSnakeCase(stringifyDecoration(spirv::Decoration::Binding));
+  auto descriptorSet = varOp.getAttrOfType<IntegerAttr>(descriptorSetName);
+  auto binding = varOp.getAttrOfType<IntegerAttr>(bindingName);
+  if (descriptorSet && binding) {
+    std::cout << "( " << descriptorSet.getInt() << " , " << binding.getInt()
+              << " )" << std::endl;
+  }
+}
+
 static void process(spirv::ModuleOp module) {
   for (auto &op : module.getBlock()) {
     if (isa<spirv::VariableOp>(op)) {
-      std::cout << "VariableOp " << std::endl;
+      processVariable(dyn_cast<spirv::VariableOp>(op));
     }
   }
 }
