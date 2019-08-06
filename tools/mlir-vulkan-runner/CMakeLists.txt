@@ -15,6 +15,10 @@ whole_archive_link(mlir-vulkan-runner
   MLIRTranslation
 )
 
+#TODO Update it
+set(VULKAN_PATH /home/khalikov/vulkan/1.1.101.0/x86_64/lib)
+find_library(VULKAN_LIB vulkan HINTS ${VULKAN_PATH})
+
 target_link_libraries(mlir-vulkan-runner PRIVATE
  MLIRIR
  MLIRParser
@@ -25,4 +29,5 @@ target_link_libraries(mlir-vulkan-runner PRIVATE
  MLIRSupport
  LLVMCore
  LLVMSupport
+ ${VULKAN_LIB}
 )
