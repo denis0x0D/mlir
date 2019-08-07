@@ -164,6 +164,66 @@ static std::vector<uint32_t> getComputeShader() {
   return std::vector<uint32_t>();
 }
 
+static std::pair<int, VkBuffer>
+createMemoryBuffer(const VkDevice &device,
+                   std::pair<int, std::vector<int32_t>> var,
+                   uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
+  const int64_t bufferSize = var.second.size() * sizeof(int32_t);
+  VkMemoryAllocateInfo memoryAllocateInfo;
+  memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  memoryAllocateInfo.pNext = nullptr;
+  memoryAllocateInfo.allocationSize = bufferSize;
+  memoryAllocateInfo.memoryTypeIndex = memoryTypeIndex;
+  // Allocate the device memory.
+  VkDeviceMemory deviceMemory;
+  BAIL_ON_BAD_RESULT(
+      vkAllocateMemory(device, &memoryAllocateInfo, 0, &deviceMemory));
+
+  // Map the device memory to host memory
+  int32_t *payload = var.second.data();
+  BAIL_ON_BAD_RESULT(
+      vkMapMemory(device, deviceMemory, 0, bufferSize, 0, (void **)&payload));
+  vkUnmapMemory(device, deviceMemory);
+
+  VkBufferCreateInfo bufferCreateInfo;
+  bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferCreateInfo.pNext = nullptr;
+  bufferCreateInfo.flags = 0;
+  bufferCreateInfo.size = bufferSize;
+  bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  bufferCreateInfo.queueFamilyIndexCount = 1;
+  bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
+
+  VkBuffer buffer;
+  BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer));
+  BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer, deviceMemory, 0));
+  return {var.first, buffer};
+}
+
+static void createDescriptorBufferInfoAndUpdateDesriptorSet(
+    VkDevice &device, const std::pair<int, VkBuffer> &memoryBuffer,
+    VkDescriptorSet &descriptorSet) {
+  VkDescriptorBufferInfo descriptorBufferInfo;
+  descriptorBufferInfo.buffer = memoryBuffer.second;
+  descriptorBufferInfo.offset = 0;
+  descriptorBufferInfo.range = VK_WHOLE_SIZE;
+
+  VkWriteDescriptorSet wSet;
+  wSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  wSet.pNext = nullptr;
+  wSet.dstSet = descriptorSet;
+  // Bind it.
+  wSet.dstBinding = memoryBuffer.first;
+  wSet.dstArrayElement = 0;
+  wSet.descriptorCount = 1;
+  wSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  wSet.pImageInfo = nullptr;
+  wSet.pBufferInfo = &descriptorBufferInfo;
+  wSet.pTexelBufferView = nullptr;
+  vkUpdateDescriptorSets(device, 1, &wSet, 0, 0);
+}
+
 static void processModule(spirv::ModuleOp module,
                           std::unordered_map<int, std::vector<int32_t>> &vars) {
   for (auto &op : module.getBlock()) {
@@ -235,56 +295,12 @@ static void processModule(spirv::ModuleOp module,
                            ? VK_ERROR_OUT_OF_HOST_MEMORY
                            : VK_SUCCESS);
 
-    VkMemoryAllocateInfo memoryAllocateInfo;
-    memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    memoryAllocateInfo.pNext = nullptr;
-    memoryAllocateInfo.allocationSize = memorySize;
-    memoryAllocateInfo.memoryTypeIndex = memoryTypeIndex;
-
-    // Allocate the device memory.
-    VkDeviceMemory memory1;
-    BAIL_ON_BAD_RESULT(
-        vkAllocateMemory(device, &memoryAllocateInfo, 0, &memory1));
-    VkDeviceMemory memory2;
-    BAIL_ON_BAD_RESULT(
-        vkAllocateMemory(device, &memoryAllocateInfo, 0, &memory2));
-    VkDeviceMemory memory3;
-    BAIL_ON_BAD_RESULT(
-        vkAllocateMemory(device, &memoryAllocateInfo, 0, &memory3));
-
-    // Map the device memory to host memory
-    int32_t *payload1, *payload2, *payload3;
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory1, 0, memorySize, 0, (void **)&payload1));
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory2, 0, memorySize, 0, (void **)&payload2));
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory3, 0, memorySize, 0, (void **)&payload3));
-
-    vkUnmapMemory(device, memory1);
-    vkUnmapMemory(device, memory2);
-    vkUnmapMemory(device, memory3);
-
-    const size_t bufferSize = 1024;
-
-    VkBufferCreateInfo bufferCreateInfo;
-    bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferCreateInfo.pNext = nullptr;
-    bufferCreateInfo.flags = 0;
-    bufferCreateInfo.size = bufferSize;
-    bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    bufferCreateInfo.queueFamilyIndexCount = 1;
-    bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
-
-    // Create buffers and bind them to the device memory.
-    VkBuffer buffer1, buffer2, buffer3;
-    BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer1));
-    BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer1, memory1, 0));
-    BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer2));
-    BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer2, memory2, 0));
-    BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer3));
-    BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer3, memory3, 0));
+    std::vector<std::pair<int, VkBuffer>> memoryBuffers;
+    for (auto &var : vars) {
+      auto memoryBuffer =
+          createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
+      memoryBuffers.push_back(memoryBuffer);
+    }
 
     std::vector<uint32_t> shader = getComputeShader();
     uint64_t codeSize = shader.size() * sizeof(uint32_t);
@@ -314,7 +330,8 @@ static void processModule(spirv::ModuleOp module,
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptorSetLayoutCreateInfo.pNext = nullptr;
     descriptorSetLayoutCreateInfo.flags = 0;
-    descriptorSetLayoutCreateInfo.bindingCount = 3;
+    // Count of bindings
+    descriptorSetLayoutCreateInfo.bindingCount = memoryBuffers.size();
     descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBindings;
 
     VkDescriptorSetLayout descriptorSetLayout;
@@ -335,10 +352,11 @@ static void processModule(spirv::ModuleOp module,
     BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
                                               0, &pipelineLayout));
 
+    // TODO: actual kernel name
     const char *kernel_name = "compute_kernel";
     VkPipelineShaderStageCreateInfo stageInfo;
     stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageInfo.pNext  = nullptr;
+    stageInfo.pNext = nullptr;
     stageInfo.flags = 0;
     stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stageInfo.module = shader_module;
@@ -363,10 +381,11 @@ static void processModule(spirv::ModuleOp module,
     commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     commandPoolCreateInfo.pNext = nullptr;
     commandPoolCreateInfo.flags = 0;
-    commandPoolCreateInfo.queueFamilyIndex =  queueFamilyIndex;
+    commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
 
-    VkDescriptorPoolSize descriptorPoolSize = {
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
+    VkDescriptorPoolSize descriptorPoolSize;
+    descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorPoolSize.descriptorCount = memoryBuffers.size();
 
     VkDescriptorPoolCreateInfo descriptorPoolCreateInfo;
     descriptorPoolCreateInfo.sType =
@@ -381,47 +400,22 @@ static void processModule(spirv::ModuleOp module,
     BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
                                               0, &descriptorPool));
 
-    VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, 0, descriptorPool, 1,
-        &descriptorSetLayout};
+    VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
+    descriptorSetAllocateInfo.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    descriptorSetAllocateInfo.pNext = nullptr;
+    descriptorSetAllocateInfo.descriptorPool = descriptorPool;
+    descriptorSetAllocateInfo.descriptorSetCount = 1;
+    descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
 
     VkDescriptorSet descriptorSet;
     BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(
         device, &descriptorSetAllocateInfo, &descriptorSet));
 
-    VkDescriptorBufferInfo in1_descriptorBufferInfo;
-    in1_descriptorBufferInfo.buffer = buffer1;
-    in1_descriptorBufferInfo.offset =  0;
-    in1_descriptorBufferInfo.range = VK_WHOLE_SIZE;
-
-    // Other buffers.
-    VkDescriptorBufferInfo in2_descriptorBufferInfo = {buffer2, 0,
-                                                       VK_WHOLE_SIZE};
-    VkDescriptorBufferInfo in3_descriptorBufferInfo = {buffer3, 0,
-                                                       VK_WHOLE_SIZE};
-
-    VkWriteDescriptorSet wSet;
-    wSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    wSet.pNext = nullptr;
-    wSet.dstSet = descriptorSet;
-    wSet.dstBinding = 0;
-    wSet.dstArrayElement = 0;
-    wSet.descriptorCount = 1;
-    wSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    wSet.pImageInfo = nullptr;
-    wSet.pBufferInfo = &in1_descriptorBufferInfo;
-    wSet.pTexelBufferView = nullptr;
-
-    const int descriptors_count = 3;
-    VkWriteDescriptorSet writeDescriptorSet[descriptors_count] = {
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, 0, descriptorSet, 0, 0, 1,
-         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &in1_descriptorBufferInfo, 0},
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, 0, descriptorSet, 1, 0, 1,
-         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &in2_descriptorBufferInfo, 0},
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, 0, descriptorSet, 2, 0, 1,
-         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &in3_descriptorBufferInfo, 0}};
-
-    vkUpdateDescriptorSets(device, descriptors_count, writeDescriptorSet, 0, 0);
+    for (auto memoryBuffer : memoryBuffers) {
+      createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
+                                                      descriptorSet);
+    }
 
     VkCommandPool commandPool;
     BAIL_ON_BAD_RESULT(
@@ -468,6 +462,7 @@ static void processModule(spirv::ModuleOp module,
 
     BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
     BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+    /*
     // Check the result.
     BAIL_ON_BAD_RESULT(
         vkMapMemory(device, memory1, 0, memorySize, 0, (void **)&payload1));
@@ -475,6 +470,7 @@ static void processModule(spirv::ModuleOp module,
         vkMapMemory(device, memory2, 0, memorySize, 0, (void **)&payload2));
     BAIL_ON_BAD_RESULT(
         vkMapMemory(device, memory3, 0, memorySize, 0, (void **)&payload3));
+        */
   }
 }
 
