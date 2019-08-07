@@ -164,26 +164,33 @@ static std::vector<uint32_t> getComputeShader() {
   return std::vector<uint32_t>();
 }
 
-static std::pair<int, VkBuffer>
+struct DeviceMemoryBuffer {
+  VkBuffer buffer;
+  VkDeviceMemory deviceMemory;
+  int descriptor;
+};
+
+static DeviceMemoryBuffer
 createMemoryBuffer(const VkDevice &device,
                    std::pair<int, std::vector<int32_t>> var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
+  DeviceMemoryBuffer memoryBuffer;
   const int64_t bufferSize = var.second.size() * sizeof(int32_t);
+
   VkMemoryAllocateInfo memoryAllocateInfo;
   memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   memoryAllocateInfo.pNext = nullptr;
   memoryAllocateInfo.allocationSize = bufferSize;
   memoryAllocateInfo.memoryTypeIndex = memoryTypeIndex;
   // Allocate the device memory.
-  VkDeviceMemory deviceMemory;
-  BAIL_ON_BAD_RESULT(
-      vkAllocateMemory(device, &memoryAllocateInfo, 0, &deviceMemory));
+  BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0,
+                                      &memoryBuffer.deviceMemory));
 
   // Map the device memory to host memory
   int32_t *payload = var.second.data();
-  BAIL_ON_BAD_RESULT(
-      vkMapMemory(device, deviceMemory, 0, bufferSize, 0, (void **)&payload));
-  vkUnmapMemory(device, deviceMemory);
+  BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
+                                 bufferSize, 0, (void **)&payload));
+  vkUnmapMemory(device, memoryBuffer.deviceMemory);
 
   VkBufferCreateInfo bufferCreateInfo;
   bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -195,17 +202,18 @@ createMemoryBuffer(const VkDevice &device,
   bufferCreateInfo.queueFamilyIndexCount = 1;
   bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
 
-  VkBuffer buffer;
-  BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buffer));
-  BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buffer, deviceMemory, 0));
-  return {var.first, buffer};
+  BAIL_ON_BAD_RESULT(
+      vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer));
+  BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, memoryBuffer.buffer,
+                                        memoryBuffer.deviceMemory, 0));
+  return memoryBuffer;
 }
 
 static void createDescriptorBufferInfoAndUpdateDesriptorSet(
-    VkDevice &device, const std::pair<int, VkBuffer> &memoryBuffer,
+    VkDevice &device, const DeviceMemoryBuffer &memoryBuffer,
     VkDescriptorSet &descriptorSet) {
   VkDescriptorBufferInfo descriptorBufferInfo;
-  descriptorBufferInfo.buffer = memoryBuffer.second;
+  descriptorBufferInfo.buffer = memoryBuffer.buffer;
   descriptorBufferInfo.offset = 0;
   descriptorBufferInfo.range = VK_WHOLE_SIZE;
 
@@ -214,7 +222,7 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   wSet.pNext = nullptr;
   wSet.dstSet = descriptorSet;
   // Bind it.
-  wSet.dstBinding = memoryBuffer.first;
+  wSet.dstBinding = memoryBuffer.descriptor;
   wSet.dstArrayElement = 0;
   wSet.descriptorCount = 1;
   wSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -295,7 +303,8 @@ static void processModule(spirv::ModuleOp module,
                            ? VK_ERROR_OUT_OF_HOST_MEMORY
                            : VK_SUCCESS);
 
-    std::vector<std::pair<int, VkBuffer>> memoryBuffers;
+    std::vector<DeviceMemoryBuffer> memoryBuffers;
+
     for (auto &var : vars) {
       auto memoryBuffer =
           createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
@@ -416,7 +425,6 @@ static void processModule(spirv::ModuleOp module,
       createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                       descriptorSet);
     }
-
     VkCommandPool commandPool;
     BAIL_ON_BAD_RESULT(
         vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
