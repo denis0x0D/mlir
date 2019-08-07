@@ -16,7 +16,7 @@ whole_archive_link(mlir-vulkan-runner
 )
 
 #TODO Update it
-set(VULKAN_PATH /home/khalikov/vulkan/1.1.101.0/x86_64/lib)
+set(VULKAN_PATH ENV{$VULKAN_SDK}/lib)
 find_library(VULKAN_LIB vulkan HINTS ${VULKAN_PATH})
 
 target_link_libraries(mlir-vulkan-runner PRIVATE

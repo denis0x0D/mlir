@@ -341,7 +341,9 @@ processModule(spirv::ModuleOp module,
     descriptorSetLayoutCreateInfo.pNext = nullptr;
     descriptorSetLayoutCreateInfo.flags = 0;
     // Count of bindings
-    descriptorSetLayoutCreateInfo.bindingCount = memoryBuffers.size();
+    // FIXME;
+    descriptorSetLayoutCreateInfo.bindingCount = 1;
+    // TODO: Here should be an array of VkDescriptorSetLayoutBindings.
     descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBindings;
 
     VkDescriptorSetLayout descriptorSetLayout;
