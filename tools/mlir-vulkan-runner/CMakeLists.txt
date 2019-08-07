@@ -27,6 +27,7 @@ target_link_libraries(mlir-vulkan-runner PRIVATE
  MLIRExecutionEngine
  MLIRJitRunner
  MLIRSupport
+ MLIRSPIRVSerialization
  LLVMCore
  LLVMSupport
  ${VULKAN_LIB}

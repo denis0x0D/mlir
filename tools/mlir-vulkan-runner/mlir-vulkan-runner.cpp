@@ -160,10 +160,6 @@ static size_t getMemorySize(std::unordered_map<int, std::vector<int32_t>> &vars)
   return count;
 }
 
-static std::vector<uint32_t> getComputeShader() {
-  return std::vector<uint32_t>();
-}
-
 struct DeviceMemoryBuffer {
   VkBuffer buffer;
   VkDeviceMemory deviceMemory;
@@ -232,8 +228,9 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   vkUpdateDescriptorSets(device, 1, &wSet, 0, 0);
 }
 
-static void processModule(spirv::ModuleOp module,
-                          std::unordered_map<int, std::vector<int32_t>> &vars) {
+static LogicalResult
+processModule(spirv::ModuleOp module,
+              std::unordered_map<int, std::vector<int32_t>> &vars) {
   for (auto &op : module.getBlock()) {
     if (isa<spirv::VariableOp>(op)) {
       processVariable(dyn_cast<spirv::VariableOp>(op));
@@ -304,22 +301,25 @@ static void processModule(spirv::ModuleOp module,
                            : VK_SUCCESS);
 
     std::vector<DeviceMemoryBuffer> memoryBuffers;
-
     for (auto &var : vars) {
       auto memoryBuffer =
           createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
       memoryBuffers.push_back(memoryBuffer);
     }
 
-    std::vector<uint32_t> shader = getComputeShader();
-    uint64_t codeSize = shader.size() * sizeof(uint32_t);
+    SmallVector<uint32_t, 0> binary;
+    if (failed(spirv::serialize(module, binary))) {
+      llvm::errs() << "can not serialize module" << '\n';
+      return failure();
+    }
 
+    uint64_t codeSize = binary.size() * sizeof(uint32_t);
     VkShaderModuleCreateInfo shaderModuleCreateInfo;
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleCreateInfo.pNext = nullptr;
     shaderModuleCreateInfo.flags = 0;
     shaderModuleCreateInfo.codeSize = codeSize;
-    shaderModuleCreateInfo.pCode = shader.data();
+    shaderModuleCreateInfo.pCode = binary.data();
 
     VkShaderModule shader_module;
     BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shaderModuleCreateInfo, 0,
@@ -482,6 +482,7 @@ static void processModule(spirv::ModuleOp module,
       // TODO: Unmap?
     }
   }
+  return success();
 }
 
 static LogicalResult
