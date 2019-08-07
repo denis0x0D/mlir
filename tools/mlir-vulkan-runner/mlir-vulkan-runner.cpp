@@ -425,6 +425,8 @@ static void processModule(spirv::ModuleOp module,
       createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                       descriptorSet);
     }
+
+    // Command pool.
     VkCommandPool commandPool;
     BAIL_ON_BAD_RESULT(
         vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
@@ -470,15 +472,15 @@ static void processModule(spirv::ModuleOp module,
 
     BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
     BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-    /*
-    // Check the result.
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory1, 0, memorySize, 0, (void **)&payload1));
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory2, 0, memorySize, 0, (void **)&payload2));
-    BAIL_ON_BAD_RESULT(
-        vkMapMemory(device, memory3, 0, memorySize, 0, (void **)&payload3));
-        */
+
+    for (auto memBuf : memoryBuffers) {
+      std::vector<int32_t> content = vars[memBuf.descriptor];
+      int32_t *payload = content.data();
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0,
+                                     content.size() * sizeof(int32_t), 0,
+                                     (void **)&payload));
+      // TODO: Unmap?
+    }
   }
 }
 
