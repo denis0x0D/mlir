@@ -171,6 +171,7 @@ createMemoryBuffer(const VkDevice &device,
                    std::pair<int, std::vector<int32_t>> var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
   DeviceMemoryBuffer memoryBuffer;
+  // TODO: Check that the size is not 0, because it will fail.
   const int64_t bufferSize = var.second.size() * sizeof(int32_t);
 
   VkMemoryAllocateInfo memoryAllocateInfo;
@@ -333,7 +334,7 @@ processModule(spirv::ModuleOp module,
     descriptorSetLayoutBindings.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     descriptorSetLayoutBindings.pImmutableSamplers = 0;
 
-    // 3 buffers - 3 bindings
+    std::cout << "mem buff size " << memoryBuffers.size() << std::endl;
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
     descriptorSetLayoutCreateInfo.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -513,7 +514,7 @@ runOnModule(raw_ostream &os, ModuleOp module,
 static void PopulateData(std::unordered_map<int, std::vector<int32_t>> &vars) {
   std::vector<int32_t> data = {1, 2, 3, 4};
   for (int i = 0; i < 3; ++i) {
-    vars.insert({i, move(data)});
+    vars.insert({i, data});
   }
 }
 
