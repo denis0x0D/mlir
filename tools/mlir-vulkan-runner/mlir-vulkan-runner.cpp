@@ -69,6 +69,36 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
+static void processVariable(spirv::VariableOp varOp) {
+  auto descriptorSetName =
+      convertToSnakeCase(stringifyDecoration(spirv::Decoration::DescriptorSet));
+  auto bindingName =
+      convertToSnakeCase(stringifyDecoration(spirv::Decoration::Binding));
+  auto descriptorSet = varOp.getAttrOfType<IntegerAttr>(descriptorSetName);
+  auto binding = varOp.getAttrOfType<IntegerAttr>(bindingName);
+  if (descriptorSet && binding) {
+    std::cout << "( " << descriptorSet.getInt() << " , " << binding.getInt()
+              << " )" << std::endl;
+  }
+}
+
+static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
+  if (!filename_to_read)
+    return nullptr;
+
+  char *shader = nullptr;
+  std::ifstream stream(filename_to_read, std::ios::ate);
+  if (stream.is_open()) {
+    size_t size = stream.tellg();
+    *size_out = size;
+    stream.seekg(0, std::ios::beg);
+    shader = (char *)malloc(size);
+    stream.read(shader, size);
+    stream.close();
+  }
+  return reinterpret_cast<uint32_t *>(shader);
+}
+
 struct VulkanDeviceMemoryBuffer {
   VkBuffer buffer;
   VkDeviceMemory deviceMemory;
@@ -89,8 +119,7 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
 
   VkQueueFamilyProperties *const queueFamilyProperties =
-      (VkQueueFamilyProperties *)malloc(sizeof(VkQueueFamilyProperties) *
-                                        queueFamilyPropertiesCount);
+      new VkQueueFamilyProperties[queueFamilyPropertiesCount];
 
   vkGetPhysicalDeviceQueueFamilyProperties(
       physicalDevice, &queueFamilyPropertiesCount, queueFamilyProperties);
@@ -127,7 +156,7 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
   return VK_ERROR_INITIALIZATION_FAILED;
 }
 
-static std::unique_ptr<VkInstance> vulkanCreateInstance() {
+static VkInstance vulkanCreateInstance() {
   VkApplicationInfo applicationInfo;
   applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   applicationInfo.pNext = nullptr;
@@ -147,39 +176,9 @@ static std::unique_ptr<VkInstance> vulkanCreateInstance() {
   instanceCreateInfo.enabledExtensionCount = 0;
   instanceCreateInfo.ppEnabledExtensionNames = 0;
 
-  std::unique_ptr<VkInstance> instance(new VkInstance);
-  BAIL_ON_BAD_RESULT(vkCreateInstance(&instanceCreateInfo, 0, instance.get()));
+  VkInstance instance;
+  BAIL_ON_BAD_RESULT(vkCreateInstance(&instanceCreateInfo, 0, &instance));
   return instance;
-}
-
-static void processVariable(spirv::VariableOp varOp) {
-  auto descriptorSetName =
-      convertToSnakeCase(stringifyDecoration(spirv::Decoration::DescriptorSet));
-  auto bindingName =
-      convertToSnakeCase(stringifyDecoration(spirv::Decoration::Binding));
-  auto descriptorSet = varOp.getAttrOfType<IntegerAttr>(descriptorSetName);
-  auto binding = varOp.getAttrOfType<IntegerAttr>(bindingName);
-  if (descriptorSet && binding) {
-    std::cout << "( " << descriptorSet.getInt() << " , " << binding.getInt()
-              << " )" << std::endl;
-  }
-}
-
-static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
-  if (!filename_to_read)
-    return nullptr;
-
-  char *shader = nullptr;
-  std::ifstream stream(filename_to_read, std::ios::ate);
-  if (stream.is_open()) {
-    size_t size = stream.tellg();
-    *size_out = size;
-    stream.seekg(0, std::ios::beg);
-    shader = (char *)malloc(size);
-    stream.read(shader, size);
-    stream.close();
-  }
-  return reinterpret_cast<uint32_t *>(shader);
 }
 
 static size_t
@@ -210,7 +209,6 @@ createMemoryBuffer(const VkDevice &device,
   BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0,
                                       &memoryBuffer.deviceMemory));
 
-  // Map the device memory to host memory
   void *payload;
   BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                  bufferSize, 0, (void **)&payload));
@@ -291,10 +289,10 @@ processModule(spirv::ModuleOp module,
   auto instance = vulkanCreateInstance();
   uint32_t physicalDeviceCount = 0;
   BAIL_ON_BAD_RESULT(
-      vkEnumeratePhysicalDevices(*instance, &physicalDeviceCount, 0));
-  VkPhysicalDevice *const physicalDevices = (VkPhysicalDevice *)malloc(
-      sizeof(VkPhysicalDevice) * physicalDeviceCount);
-  BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(*instance, &physicalDeviceCount,
+      vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
+  VkPhysicalDevice *const physicalDevices =
+      new VkPhysicalDevice[physicalDeviceCount];
+  BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
                                                 physicalDevices));
   if (physicalDeviceCount) {
     uint32_t queueFamilyIndex = 0;
@@ -543,7 +541,7 @@ processModule(spirv::ModuleOp module,
 
 static LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
-            std::unordered_map<Descriptor, VulkanBufferContent> vars) {
+            std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
 
   if (failed(module.verify())) {
     return failure();
