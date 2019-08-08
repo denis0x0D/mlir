@@ -69,6 +69,19 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
+struct VulkanDeviceMemoryBuffer {
+  VkBuffer buffer;
+  VkDeviceMemory deviceMemory;
+  int descriptor;
+};
+
+struct VulkanBufferContent {
+  // Pointer to the host memory
+  void *ptr;
+  // Size in bytes
+  int64_t size;
+};
+
 static void *_alloca(size_t size) { return malloc(size); }
 
 static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
@@ -181,22 +194,9 @@ getMemorySize(std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
   return count;
 }
 
-struct VulkanDeviceMemoryBuffer {
-  VkBuffer buffer;
-  VkDeviceMemory deviceMemory;
-  int descriptor;
-};
-
-struct VulkanBufferContent {
-  // Pointer to the host memory
-  void *ptr;
-  // Size in bytes
-  int64_t size;
-};
-
 static VulkanDeviceMemoryBuffer
 createMemoryBuffer(const VkDevice &device,
-                   std::pair<Descriptor, VulkanBufferContent> &var,
+                   std::pair<Descriptor, VulkanBufferContent> var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
   VulkanDeviceMemoryBuffer memoryBuffer;
   memoryBuffer.descriptor = var.first;
@@ -213,15 +213,11 @@ createMemoryBuffer(const VkDevice &device,
                                       &memoryBuffer.deviceMemory));
 
   // Map the device memory to host memory
-  int32_t *payload;
+  void *payload;
   BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                  bufferSize, 0, (void **)&payload));
 
-  // TODO: this is ugly.
-  for (int i = 0; i < var.second.size(); ++i) {
-    payload[i] = var.second[i];
-  }
-
+  memcpy(payload, var.second.ptr, var.second.size);
   vkUnmapMemory(device, memoryBuffer.deviceMemory);
 
   VkBufferCreateInfo bufferCreateInfo;
@@ -271,7 +267,7 @@ static void Print(int32_t *result, int size) {
 }
 
 static VkDescriptorSetLayoutBinding
-createDescriptorSetLayoutBinding(int descriptor) {
+createDescriptorSetLayoutBinding(Descriptor descriptor) {
   VkDescriptorSetLayoutBinding descriptorSetLayoutBindings;
   descriptorSetLayoutBindings.binding = descriptor;
   descriptorSetLayoutBindings.descriptorType =
@@ -537,9 +533,8 @@ processModule(spirv::ModuleOp module,
 
     for (auto memBuf : memoryBuffers) {
       int32_t *payload;
-      size_t size = vars[memBuf.descriptor].size();
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0,
-                                     size * sizeof(int32_t), 0,
+      size_t size = vars[memBuf.descriptor].size;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
                                      (void **)&payload));
       Print(payload, size);
     }
@@ -550,7 +545,7 @@ processModule(spirv::ModuleOp module,
 
 static LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
-            std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
+            std::unordered_map<Descriptor, VulkanBufferContent> vars) {
 
   if (failed(module.verify())) {
     return failure();
@@ -581,7 +576,7 @@ PopulateData(std::unordered_map<Descriptor, VulkanBufferContent> &vars,
     for (int j = 0; j < 4; ++j) {
       ptr[j] = j;
     }
-    vars.insert({i, ptr});
+    vars.insert({i, {ptr, sizeof(int) * 4}});
   }
 }
 
@@ -605,7 +600,7 @@ int main(int argc, char **argv) {
 
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
-  std::unordered_map<Descriptor, Content> variables;
+  std::unordered_map<Descriptor, VulkanBufferContent> variables;
   PopulateData(variables, 3);
 
   MLIRContext context;
