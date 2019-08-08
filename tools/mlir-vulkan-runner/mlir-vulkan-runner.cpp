@@ -82,8 +82,6 @@ struct VulkanBufferContent {
   int64_t size;
 };
 
-static void *_alloca(size_t size) { return malloc(size); }
-
 static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
                                          uint32_t *queueFamilyIndex) {
   uint32_t queueFamilyPropertiesCount = 0;
@@ -91,8 +89,8 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
 
   VkQueueFamilyProperties *const queueFamilyProperties =
-      (VkQueueFamilyProperties *)_alloca(sizeof(VkQueueFamilyProperties) *
-                                         queueFamilyPropertiesCount);
+      (VkQueueFamilyProperties *)malloc(sizeof(VkQueueFamilyProperties) *
+                                        queueFamilyPropertiesCount);
 
   vkGetPhysicalDeviceQueueFamilyProperties(
       physicalDevice, &queueFamilyPropertiesCount, queueFamilyProperties);
