@@ -251,8 +251,8 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
 }
 
 static VkDevice vulkanCreateDevice(VkInstance &instance,
-                                   uint32_t &queueFamilyIndex,
                                    uint32_t &memoryTypeIndex,
+                                   uint32_t &queueFamilyIndex,
                                    const VkDeviceSize memorySize) {
   uint32_t physicalDeviceCount = 0;
   VkDevice device;
@@ -342,7 +342,7 @@ static VkShaderModule createShaderModule(VkDevice &device) {
   size_t size = 0;
   SmallVector<uint32_t, 0> binary;
   uint32_t *shader =
-      ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
+      ReadFromFile(&size, "/home/denis/llvm-project/llvm/projects/mlir/"
                           "test/mlir-vulkan-runner/kernel.spv");
   if (!shader) {
     exit(0);
