@@ -53,6 +53,7 @@
 
 using namespace mlir;
 using namespace llvm;
+using Descriptor = int32_t;
 
 #define BAIL_ON_BAD_RESULT(result)                                             \
   if (VK_SUCCESS != (result)) {                                                \
@@ -119,7 +120,7 @@ static std::unique_ptr<VkInstance> vulkanCreateInstance() {
   VkApplicationInfo applicationInfo;
   applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   applicationInfo.pNext = nullptr;
-  applicationInfo.pApplicationName = "VKComputeSample";
+  applicationInfo.pApplicationName = "Vulkan MLIR runtime";
   applicationInfo.applicationVersion = 0;
   applicationInfo.pEngineName = "mlir";
   applicationInfo.engineVersion = 0;
@@ -170,11 +171,12 @@ static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
   return reinterpret_cast<uint32_t *>(shader);
 }
 
-static size_t getMemorySize(std::unordered_map<int, std::vector<int32_t>> &vars) {
+static size_t
+getMemorySize(std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
   size_t count = 0;
   for (auto var : vars) {
     // TODO: Here should be a type.
-    count += var.second.size() * sizeof(int32_t);
+    count += var.second.size;
   }
   return count;
 }
@@ -185,7 +187,7 @@ struct VulkanDeviceMemoryBuffer {
   int descriptor;
 };
 
-struct VukanBufferContent {
+struct VulkanBufferContent {
   // Pointer to the host memory
   void *ptr;
   // Size in bytes
@@ -194,12 +196,12 @@ struct VukanBufferContent {
 
 static VulkanDeviceMemoryBuffer
 createMemoryBuffer(const VkDevice &device,
-                   std::pair<int, std::vector<int32_t>> var,
+                   std::pair<Descriptor, VulkanBufferContent> &var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
   VulkanDeviceMemoryBuffer memoryBuffer;
   memoryBuffer.descriptor = var.first;
   // TODO: Check that the size is not 0, because it will fail.
-  const int64_t bufferSize = var.second.size() * sizeof(int32_t);
+  const int64_t bufferSize = var.second.size;
 
   VkMemoryAllocateInfo memoryAllocateInfo;
   memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -282,7 +284,7 @@ createDescriptorSetLayoutBinding(int descriptor) {
 
 static LogicalResult
 processModule(spirv::ModuleOp module,
-              std::unordered_map<int, std::vector<int32_t>> &vars) {
+              std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
   /*
   // TODO: deduce needed info from vars.
   for (auto &op : module.getBlock()) {
@@ -548,7 +550,7 @@ processModule(spirv::ModuleOp module,
 
 static LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
-            std::unordered_map<int, std::vector<int32_t>> &vars) {
+            std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
 
   if (failed(module.verify())) {
     return failure();
@@ -571,11 +573,15 @@ runOnModule(raw_ostream &os, ModuleOp module,
   return success();
 }
 
-static void PopulateData(std::unordered_map<int, std::vector<int32_t>> &vars,
-                         int count) {
-  std::vector<int32_t> data = {1, 2, 3, 4};
+static void
+PopulateData(std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+             int count) {
   for (int i = 0; i < count; ++i) {
-    vars.insert({i, data});
+    int *ptr = new int[4];
+    for (int j = 0; j < 4; ++j) {
+      ptr[j] = j;
+    }
+    vars.insert({i, ptr});
   }
 }
 
@@ -599,7 +605,7 @@ int main(int argc, char **argv) {
 
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
-  std::unordered_map<int, std::vector<int32_t>> variables;
+  std::unordered_map<Descriptor, Content> variables;
   PopulateData(variables, 3);
 
   MLIRContext context;
