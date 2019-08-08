@@ -531,7 +531,7 @@ processModule(spirv::ModuleOp module,
                                      content.size() * sizeof(int32_t), 0,
                                      (void **)&payload));
       // TODO: Unmap?
-    //  Print(payload, content.size());
+      Print(payload, content.size());
     }
     std::cout << "End of pipeline" << std::endl;
   }
