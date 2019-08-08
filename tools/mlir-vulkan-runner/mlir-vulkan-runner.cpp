@@ -368,6 +368,41 @@ static VkShaderModule createShaderModule(VkDevice &device) {
   return shader_module;
 }
 
+static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
+    VkDevice &device,
+    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings) {
+  VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
+  descriptorSetLayoutCreateInfo.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  descriptorSetLayoutCreateInfo.pNext = nullptr;
+  descriptorSetLayoutCreateInfo.flags = 0;
+  descriptorSetLayoutCreateInfo.bindingCount =
+      descriptorSetLayoutBindings.size();
+  descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
+  VkDescriptorSetLayout descriptorSetLayout;
+  BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
+      device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
+  return descriptorSetLayout;
+}
+
+static VkPipelineLayout
+vulkanCreatePipelineLayout(VkDevice &device,
+                           VkDescriptorSetLayout &descriptorSetLayout) {
+  VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
+  pipelineLayoutCreateInfo.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutCreateInfo.pNext = nullptr;
+  pipelineLayoutCreateInfo.flags = 0;
+  pipelineLayoutCreateInfo.setLayoutCount = 1;
+  pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
+  pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
+  pipelineLayoutCreateInfo.pPushConstantRanges = 0;
+  VkPipelineLayout pipelineLayout;
+  BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
+                                            0, &pipelineLayout));
+  return pipelineLayout;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -390,7 +425,6 @@ processModule(spirv::ModuleOp module,
   // TODO: return type is LogicalResult
   auto device = vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex,
                                    memorySize);
-
   // TODO: Refactor to single function.
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
   for (auto &var : vars) {
@@ -398,42 +432,15 @@ processModule(spirv::ModuleOp module,
         createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
     memoryBuffers.push_back(memoryBuffer);
   }
-
   auto shader_module = createShaderModule(device);
-
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   for (auto var : vars) {
     descriptorSetLayoutBindings.push_back(
         createDescriptorSetLayoutBinding(var.first));
   }
-
-  // TODO: Move to function.
-  VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
-  descriptorSetLayoutCreateInfo.sType =
-      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  descriptorSetLayoutCreateInfo.pNext = nullptr;
-  descriptorSetLayoutCreateInfo.flags = 0;
-  descriptorSetLayoutCreateInfo.bindingCount =
-      descriptorSetLayoutBindings.size();
-  descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
-  VkDescriptorSetLayout descriptorSetLayout;
-  BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
-      device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
-
-  
-  // TODO: move to function.
-  VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-  pipelineLayoutCreateInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutCreateInfo.pNext = nullptr;
-  pipelineLayoutCreateInfo.flags = 0;
-  pipelineLayoutCreateInfo.setLayoutCount = 1;
-  pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
-  pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
-  pipelineLayoutCreateInfo.pPushConstantRanges = 0;
-  VkPipelineLayout pipelineLayout;
-  BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
-                                            0, &pipelineLayout));
+  auto descriptorSetLayout =
+      vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings);
+  auto pipelineLayout = vulkanCreatePipelineLayout(device, descriptorSetLayout);
 
   // TODO: actual kernel name
   const char *kernel_name = "compute_kernel";
@@ -497,7 +504,6 @@ processModule(spirv::ModuleOp module,
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
-
   // TODO: Move to function.
   // Command pool.
   VkCommandPool commandPool;
