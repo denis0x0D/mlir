@@ -179,17 +179,24 @@ static size_t getMemorySize(std::unordered_map<int, std::vector<int32_t>> &vars)
   return count;
 }
 
-struct DeviceMemoryBuffer {
+struct VulkanDeviceMemoryBuffer {
   VkBuffer buffer;
   VkDeviceMemory deviceMemory;
   int descriptor;
 };
 
-static DeviceMemoryBuffer
+struct VukanBufferContent {
+  // Pointer to the host memory
+  void *ptr;
+  // Size in bytes
+  int64_t size;
+};
+
+static VulkanDeviceMemoryBuffer
 createMemoryBuffer(const VkDevice &device,
                    std::pair<int, std::vector<int32_t>> var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
-  DeviceMemoryBuffer memoryBuffer;
+  VulkanDeviceMemoryBuffer memoryBuffer;
   memoryBuffer.descriptor = var.first;
   // TODO: Check that the size is not 0, because it will fail.
   const int64_t bufferSize = var.second.size() * sizeof(int32_t);
@@ -231,10 +238,9 @@ createMemoryBuffer(const VkDevice &device,
   return memoryBuffer;
 }
 
-static void
-createDescriptorBufferInfoAndUpdateDesriptorSet(VkDevice device,
-                                                DeviceMemoryBuffer memoryBuffer,
-                                                VkDescriptorSet descriptorSet) {
+static void createDescriptorBufferInfoAndUpdateDesriptorSet(
+    VkDevice &device, VulkanDeviceMemoryBuffer &memoryBuffer,
+    VkDescriptorSet &descriptorSet) {
   VkDescriptorBufferInfo descriptorBufferInfo;
   descriptorBufferInfo.buffer = memoryBuffer.buffer;
   descriptorBufferInfo.offset = 0;
@@ -348,7 +354,7 @@ processModule(spirv::ModuleOp module,
                            ? VK_ERROR_OUT_OF_HOST_MEMORY
                            : VK_SUCCESS);
 
-    std::vector<DeviceMemoryBuffer> memoryBuffers;
+    std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
     for (auto &var : vars) {
       auto memoryBuffer =
           createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
@@ -597,11 +603,6 @@ int main(int argc, char **argv) {
   PopulateData(variables, 3);
 
   MLIRContext context;
-  std::cout << "Print variable before the compute shader" << std::endl;
-  for (auto var : variables) {
-    Print(var.second.data(), var.second.size());
-  }
-
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
     llvm::errs() << "can not open the file" << '\n';
