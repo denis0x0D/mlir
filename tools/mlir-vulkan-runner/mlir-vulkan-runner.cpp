@@ -204,9 +204,15 @@ createMemoryBuffer(const VkDevice &device,
                                       &memoryBuffer.deviceMemory));
 
   // Map the device memory to host memory
-  int32_t *payload = var.second.data();
+  int32_t *payload;
   BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                  bufferSize, 0, (void **)&payload));
+
+  // TODO: this is ugly.
+  for (int i = 0; i < var.second.size(); ++i) {
+    payload[i] = var.second[i];
+  }
+
   vkUnmapMemory(device, memoryBuffer.deviceMemory);
 
   VkBufferCreateInfo bufferCreateInfo;
@@ -218,7 +224,6 @@ createMemoryBuffer(const VkDevice &device,
   bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   bufferCreateInfo.queueFamilyIndexCount = 1;
   bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
-
   BAIL_ON_BAD_RESULT(
       vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer));
   BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, memoryBuffer.buffer,
@@ -239,8 +244,6 @@ createDescriptorBufferInfoAndUpdateDesriptorSet(VkDevice device,
   wSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   wSet.pNext = nullptr;
   wSet.dstSet = descriptorSet;
-  // Bind it.
-  std::cout << "descriptor binding" << memoryBuffer.descriptor;
   wSet.dstBinding = memoryBuffer.descriptor;
   wSet.dstArrayElement = 0;
   wSet.descriptorCount = 1;
@@ -258,6 +261,7 @@ static void Print(int32_t *result, int size) {
   }
   std::cout << "buffer ended" << std::endl;
 }
+
 static VkDescriptorSetLayoutBinding
 createDescriptorSetLayoutBinding(int descriptor) {
   VkDescriptorSetLayoutBinding descriptorSetLayoutBindings;
@@ -476,7 +480,6 @@ processModule(spirv::ModuleOp module,
       createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                       descriptorSet);
     }
-
     // Command pool.
     VkCommandPool commandPool;
     BAIL_ON_BAD_RESULT(
@@ -525,13 +528,12 @@ processModule(spirv::ModuleOp module,
     BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
 
     for (auto memBuf : memoryBuffers) {
-      std::vector<int32_t> content = vars[memBuf.descriptor];
-      int32_t *payload = content.data();
+      int32_t *payload;
+      size_t size = vars[memBuf.descriptor].size();
       BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0,
-                                     content.size() * sizeof(int32_t), 0,
+                                     size * sizeof(int32_t), 0,
                                      (void **)&payload));
-      // TODO: Unmap?
-      Print(payload, content.size());
+      Print(payload, size);
     }
     std::cout << "End of pipeline" << std::endl;
   }
@@ -595,6 +597,11 @@ int main(int argc, char **argv) {
   PopulateData(variables, 3);
 
   MLIRContext context;
+  std::cout << "Print variable before the compute shader" << std::endl;
+  for (auto var : variables) {
+    Print(var.second.data(), var.second.size());
+  }
+
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
     llvm::errs() << "can not open the file" << '\n';
