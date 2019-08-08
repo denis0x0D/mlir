@@ -403,6 +403,35 @@ vulkanCreatePipelineLayout(VkDevice &device,
   return pipelineLayout;
 }
 
+static VkPipeline vulkanCreatePipeline(VkDevice &device,
+                                       VkPipelineLayout &pipelineLayout,
+                                       VkShaderModule &shaderModule) {
+  // TODO: actual kernel name
+  const char *kernel_name = "compute_kernel";
+  VkPipelineShaderStageCreateInfo stageInfo;
+  stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stageInfo.pNext = nullptr;
+  stageInfo.flags = 0;
+  stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  stageInfo.module = shaderModule;
+  stageInfo.pName = kernel_name;
+  stageInfo.pSpecializationInfo = 0;
+
+  VkComputePipelineCreateInfo computePipelineCreateInfo;
+  computePipelineCreateInfo.sType =
+      VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  computePipelineCreateInfo.pNext = nullptr;
+  computePipelineCreateInfo.flags = 0;
+  computePipelineCreateInfo.stage = stageInfo;
+  computePipelineCreateInfo.layout = pipelineLayout;
+  computePipelineCreateInfo.basePipelineHandle = 0;
+  computePipelineCreateInfo.basePipelineIndex = 0;
+  VkPipeline pipeline;
+  BAIL_ON_BAD_RESULT(vkCreateComputePipelines(
+      device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
+  return pipeline;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -441,30 +470,7 @@ processModule(spirv::ModuleOp module,
   auto descriptorSetLayout =
       vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings);
   auto pipelineLayout = vulkanCreatePipelineLayout(device, descriptorSetLayout);
-
-  // TODO: actual kernel name
-  const char *kernel_name = "compute_kernel";
-  VkPipelineShaderStageCreateInfo stageInfo;
-  stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  stageInfo.pNext = nullptr;
-  stageInfo.flags = 0;
-  stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-  stageInfo.module = shader_module;
-  stageInfo.pName = kernel_name;
-  stageInfo.pSpecializationInfo = 0;
-
-  VkComputePipelineCreateInfo computePipelineCreateInfo;
-  computePipelineCreateInfo.sType =
-      VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-  computePipelineCreateInfo.pNext = nullptr;
-  computePipelineCreateInfo.flags = 0;
-  computePipelineCreateInfo.stage = stageInfo;
-  computePipelineCreateInfo.layout = pipelineLayout;
-  computePipelineCreateInfo.basePipelineHandle = 0;
-  computePipelineCreateInfo.basePipelineIndex = 0;
-  VkPipeline pipeline;
-  BAIL_ON_BAD_RESULT(vkCreateComputePipelines(
-      device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
+  auto pipeline = vulkanCreatePipeline(device, pipelineLayout, shader_module);
 
   // TODO: Move to function.
   VkCommandPoolCreateInfo commandPoolCreateInfo;
