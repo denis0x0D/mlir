@@ -112,7 +112,7 @@ struct VulkanBufferContent {
   int64_t size;
 };
 
-static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
+static VkResult vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
                                          uint32_t *queueFamilyIndex) {
   uint32_t queueFamilyPropertiesCount = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
@@ -229,7 +229,7 @@ createMemoryBuffer(const VkDevice &device,
 }
 
 static void createDescriptorBufferInfoAndUpdateDesriptorSet(
-    VkDevice &device, VulkanDeviceMemoryBuffer &memoryBuffer,
+    const VkDevice &device, VulkanDeviceMemoryBuffer &memoryBuffer,
     VkDescriptorSet &descriptorSet) {
   VkDescriptorBufferInfo descriptorBufferInfo;
   descriptorBufferInfo.buffer = memoryBuffer.buffer;
@@ -250,7 +250,7 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   vkUpdateDescriptorSets(device, 1, &wSet, 0, nullptr);
 }
 
-static VkDevice vulkanCreateDevice(VkInstance &instance,
+static VkDevice vulkanCreateDevice(const VkInstance &instance,
                                    uint32_t &memoryTypeIndex,
                                    uint32_t &queueFamilyIndex,
                                    const VkDeviceSize memorySize) {
@@ -338,7 +338,7 @@ createDescriptorSetLayoutBinding(Descriptor descriptor) {
   return descriptorSetLayoutBindings;
 }
 
-static VkShaderModule createShaderModule(VkDevice &device) {
+static VkShaderModule createShaderModule(const VkDevice &device) {
   size_t size = 0;
   SmallVector<uint32_t, 0> binary;
   uint32_t *shader =
@@ -369,7 +369,7 @@ static VkShaderModule createShaderModule(VkDevice &device) {
 }
 
 static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
-    VkDevice &device,
+    const VkDevice &device,
     std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings) {
   VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
   descriptorSetLayoutCreateInfo.sType =
@@ -386,7 +386,7 @@ static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
 }
 
 static VkPipelineLayout
-vulkanCreatePipelineLayout(VkDevice &device,
+vulkanCreatePipelineLayout(const VkDevice &device,
                            VkDescriptorSetLayout &descriptorSetLayout) {
   VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
   pipelineLayoutCreateInfo.sType =
@@ -403,7 +403,7 @@ vulkanCreatePipelineLayout(VkDevice &device,
   return pipelineLayout;
 }
 
-static VkPipeline vulkanCreatePipeline(VkDevice &device,
+static VkPipeline vulkanCreatePipeline(const VkDevice &device,
                                        VkPipelineLayout &pipelineLayout,
                                        VkShaderModule &shaderModule) {
   // TODO: actual kernel name
@@ -433,10 +433,10 @@ static VkPipeline vulkanCreatePipeline(VkDevice &device,
 }
 
 static VkDescriptorPool
-vulkanCreateDescriptorPool(VkDevice &device, uint32_t queueFamilyIndex,
+vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
                            uint32_t descriptorCount,
                            VkCommandPoolCreateInfo &commandPoolCreateInfo) {
-    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.pNext = nullptr;
   commandPoolCreateInfo.flags = 0;
   commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
