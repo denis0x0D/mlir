@@ -432,6 +432,31 @@ static VkPipeline vulkanCreatePipeline(VkDevice &device,
   return pipeline;
 }
 
+static VkDescriptorPool
+vulkanCreateDescriptorPool(VkDevice &device, uint32_t queueFamilyIndex,
+                           uint32_t descriptorCount,
+                           VkCommandPoolCreateInfo &commandPoolCreateInfo) {
+    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  commandPoolCreateInfo.pNext = nullptr;
+  commandPoolCreateInfo.flags = 0;
+  commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
+  VkDescriptorPoolSize descriptorPoolSize;
+  descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  descriptorPoolSize.descriptorCount = descriptorCount;
+  VkDescriptorPoolCreateInfo descriptorPoolCreateInfo;
+  descriptorPoolCreateInfo.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  descriptorPoolCreateInfo.pNext = nullptr;
+  descriptorPoolCreateInfo.flags = 0;
+  descriptorPoolCreateInfo.maxSets = 1;
+  descriptorPoolCreateInfo.poolSizeCount = 1;
+  descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
+  VkDescriptorPool descriptorPool;
+  BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
+                                            0, &descriptorPool));
+  return descriptorPool;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -471,28 +496,9 @@ processModule(spirv::ModuleOp module,
       vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings);
   auto pipelineLayout = vulkanCreatePipelineLayout(device, descriptorSetLayout);
   auto pipeline = vulkanCreatePipeline(device, pipelineLayout, shader_module);
-
-  // TODO: Move to function.
   VkCommandPoolCreateInfo commandPoolCreateInfo;
-  commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-  commandPoolCreateInfo.pNext = nullptr;
-  commandPoolCreateInfo.flags = 0;
-  commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
-  VkDescriptorPoolSize descriptorPoolSize;
-  descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorPoolSize.descriptorCount = memoryBuffers.size();
-  VkDescriptorPoolCreateInfo descriptorPoolCreateInfo;
-  descriptorPoolCreateInfo.sType =
-      VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  descriptorPoolCreateInfo.pNext = nullptr;
-  descriptorPoolCreateInfo.flags = 0;
-  descriptorPoolCreateInfo.maxSets = 1;
-  descriptorPoolCreateInfo.poolSizeCount = 1;
-  descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
-  VkDescriptorPool descriptorPool;
-  BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
-                                            0, &descriptorPool));
-
+  auto descriptorPool = vulkanCreateDescriptorPool(
+      device, queueFamilyIndex, memoryBuffers.size(), commandPoolCreateInfo);
   // TODO: Move to function.
   VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
   descriptorSetAllocateInfo.sType =
