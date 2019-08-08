@@ -338,6 +338,36 @@ createDescriptorSetLayoutBinding(Descriptor descriptor) {
   return descriptorSetLayoutBindings;
 }
 
+static VkShaderModule createShaderModule(VkDevice &device) {
+  size_t size = 0;
+  SmallVector<uint32_t, 0> binary;
+  uint32_t *shader =
+      ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
+                          "test/mlir-vulkan-runner/kernel.spv");
+  if (!shader) {
+    exit(0);
+  }
+  /*
+  if (failed(spirv::serialize(module, binary))) {
+    llvm::errs() << "can not serialize module" << '\n';
+    return failure();
+  }
+  */
+
+  uint64_t codeSize = size;
+  VkShaderModuleCreateInfo shaderModuleCreateInfo;
+  shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  shaderModuleCreateInfo.pNext = nullptr;
+  shaderModuleCreateInfo.flags = 0;
+  shaderModuleCreateInfo.codeSize = codeSize;
+  shaderModuleCreateInfo.pCode = shader;
+  VkShaderModule shader_module;
+  BAIL_ON_BAD_RESULT(
+      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shader_module));
+  // TODO: return LogicalResult.
+  return shader_module;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -369,33 +399,7 @@ processModule(spirv::ModuleOp module,
     memoryBuffers.push_back(memoryBuffer);
   }
 
-  size_t size = 0;
-  SmallVector<uint32_t, 0> binary;
-  uint32_t *shader =
-      ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
-                          "test/mlir-vulkan-runner/kernel.spv");
-  if (!shader) {
-    exit(0);
-  }
-  /*
-  if (failed(spirv::serialize(module, binary))) {
-    llvm::errs() << "can not serialize module" << '\n';
-    return failure();
-  }
-  */
-
-
-  uint64_t codeSize = size;
-  VkShaderModuleCreateInfo shaderModuleCreateInfo;
-  shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  shaderModuleCreateInfo.pNext = nullptr;
-  shaderModuleCreateInfo.flags = 0;
-  shaderModuleCreateInfo.codeSize = codeSize;
-  shaderModuleCreateInfo.pCode = shader;
-
-  VkShaderModule shader_module;
-  BAIL_ON_BAD_RESULT(
-      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shader_module));
+  auto shader_module = createShaderModule(device);
 
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   for (auto var : vars) {
@@ -403,6 +407,7 @@ processModule(spirv::ModuleOp module,
         createDescriptorSetLayoutBinding(var.first));
   }
 
+  // TODO: Move to function.
   VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
   descriptorSetLayoutCreateInfo.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -411,11 +416,12 @@ processModule(spirv::ModuleOp module,
   descriptorSetLayoutCreateInfo.bindingCount =
       descriptorSetLayoutBindings.size();
   descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
-
   VkDescriptorSetLayout descriptorSetLayout;
   BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
       device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
 
+  
+  // TODO: move to function.
   VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
   pipelineLayoutCreateInfo.sType =
       VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -425,7 +431,6 @@ processModule(spirv::ModuleOp module,
   pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
   pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
   pipelineLayoutCreateInfo.pPushConstantRanges = 0;
-
   VkPipelineLayout pipelineLayout;
   BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
                                             0, &pipelineLayout));
@@ -450,21 +455,19 @@ processModule(spirv::ModuleOp module,
   computePipelineCreateInfo.layout = pipelineLayout;
   computePipelineCreateInfo.basePipelineHandle = 0;
   computePipelineCreateInfo.basePipelineIndex = 0;
-
   VkPipeline pipeline;
   BAIL_ON_BAD_RESULT(vkCreateComputePipelines(
       device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
 
+  // TODO: Move to function.
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.pNext = nullptr;
   commandPoolCreateInfo.flags = 0;
   commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
-
   VkDescriptorPoolSize descriptorPoolSize;
   descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   descriptorPoolSize.descriptorCount = memoryBuffers.size();
-
   VkDescriptorPoolCreateInfo descriptorPoolCreateInfo;
   descriptorPoolCreateInfo.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -473,11 +476,11 @@ processModule(spirv::ModuleOp module,
   descriptorPoolCreateInfo.maxSets = 1;
   descriptorPoolCreateInfo.poolSizeCount = 1;
   descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
-
   VkDescriptorPool descriptorPool;
   BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
                                             0, &descriptorPool));
 
+  // TODO: Move to function.
   VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
   descriptorSetAllocateInfo.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -494,6 +497,8 @@ processModule(spirv::ModuleOp module,
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
+
+  // TODO: Move to function.
   // Command pool.
   VkCommandPool commandPool;
   BAIL_ON_BAD_RESULT(
@@ -525,6 +530,7 @@ processModule(spirv::ModuleOp module,
   vkCmdDispatch(commandBuffer, 1, 1, 1);
   BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
 
+  // TODO: Move to the function.
   VkQueue queue;
   vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
   VkSubmitInfo submitInfo;
