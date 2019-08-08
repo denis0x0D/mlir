@@ -118,16 +118,14 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
 
-  VkQueueFamilyProperties *const queueFamilyProperties =
-      new VkQueueFamilyProperties[queueFamilyPropertiesCount];
+  std::vector<VkQueueFamilyProperties> queueFamilyProperties(
+      queueFamilyPropertiesCount);
 
-  vkGetPhysicalDeviceQueueFamilyProperties(
-      physicalDevice, &queueFamilyPropertiesCount, queueFamilyProperties);
+  vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
+                                           &queueFamilyPropertiesCount,
+                                           queueFamilyProperties.data());
 
-  // first try and find a queue that has just the compute bit set
-  for (uint32_t i = 0; i < queueFamilyPropertiesCount; i++) {
-    // mask out the sparse binding bit that we aren't caring about (yet!) and
-    // the transfer bit
+  for (uint32_t i = 0; i < queueFamilyPropertiesCount; ++i) {
     const VkQueueFlags maskedFlags =
         (~(VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT) &
          queueFamilyProperties[i].queueFlags);
@@ -139,10 +137,8 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
     }
   }
 
-  // lastly get any queue that'll work for us
+  // Try to find other queue.
   for (uint32_t i = 0; i < queueFamilyPropertiesCount; i++) {
-    // mask out the sparse binding bit that we aren't caring about (yet!) and
-    // the transfer bit
     const VkQueueFlags maskedFlags =
         (~(VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT) &
          queueFamilyProperties[i].queueFlags);
@@ -152,7 +148,7 @@ static VkResult vkGetBestComputeQueueNPH(VkPhysicalDevice physicalDevice,
       return VK_SUCCESS;
     }
   }
-
+  // TODO: must other error;
   return VK_ERROR_INITIALIZATION_FAILED;
 }
 
@@ -290,10 +286,10 @@ processModule(spirv::ModuleOp module,
   uint32_t physicalDeviceCount = 0;
   BAIL_ON_BAD_RESULT(
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
-  VkPhysicalDevice *const physicalDevices =
-      new VkPhysicalDevice[physicalDeviceCount];
+  std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
+
   BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
-                                                physicalDevices));
+                                                physicalDevices.data()));
   if (physicalDeviceCount) {
     uint32_t queueFamilyIndex = 0;
     BAIL_ON_BAD_RESULT(
