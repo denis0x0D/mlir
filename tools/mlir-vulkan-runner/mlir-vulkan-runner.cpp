@@ -48,6 +48,8 @@
 #include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
+#include <iostream>
+#include <fstream>
 
 using namespace mlir;
 using namespace llvm;
@@ -151,6 +153,23 @@ static void processVariable(spirv::VariableOp varOp) {
   }
 }
 
+static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
+  if (!filename_to_read)
+    return nullptr;
+
+  char *shader = nullptr;
+  std::ifstream stream(filename_to_read, std::ios::ate);
+  if (stream.is_open()) {
+    size_t size = stream.tellg();
+    *size_out = size;
+    stream.seekg(0, std::ios::beg);
+    shader = (char *)malloc(size);
+    stream.read(shader, size);
+    stream.close();
+  }
+  return reinterpret_cast<uint32_t *>(shader);
+}
+
 static size_t getMemorySize(std::unordered_map<int, std::vector<int32_t>> &vars) {
   size_t count = 0;
   for (auto var : vars) {
@@ -171,6 +190,7 @@ createMemoryBuffer(const VkDevice &device,
                    std::pair<int, std::vector<int32_t>> var,
                    uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
   DeviceMemoryBuffer memoryBuffer;
+  memoryBuffer.descriptor = var.first;
   // TODO: Check that the size is not 0, because it will fail.
   const int64_t bufferSize = var.second.size() * sizeof(int32_t);
 
@@ -206,9 +226,10 @@ createMemoryBuffer(const VkDevice &device,
   return memoryBuffer;
 }
 
-static void createDescriptorBufferInfoAndUpdateDesriptorSet(
-    VkDevice &device, const DeviceMemoryBuffer &memoryBuffer,
-    VkDescriptorSet &descriptorSet) {
+static void
+createDescriptorBufferInfoAndUpdateDesriptorSet(VkDevice device,
+                                                DeviceMemoryBuffer memoryBuffer,
+                                                VkDescriptorSet descriptorSet) {
   VkDescriptorBufferInfo descriptorBufferInfo;
   descriptorBufferInfo.buffer = memoryBuffer.buffer;
   descriptorBufferInfo.offset = 0;
@@ -219,6 +240,7 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   wSet.pNext = nullptr;
   wSet.dstSet = descriptorSet;
   // Bind it.
+  std::cout << "descriptor binding" << memoryBuffer.descriptor;
   wSet.dstBinding = memoryBuffer.descriptor;
   wSet.dstArrayElement = 0;
   wSet.descriptorCount = 1;
@@ -226,17 +248,39 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   wSet.pImageInfo = nullptr;
   wSet.pBufferInfo = &descriptorBufferInfo;
   wSet.pTexelBufferView = nullptr;
-  vkUpdateDescriptorSets(device, 1, &wSet, 0, 0);
+  vkUpdateDescriptorSets(device, 1, &wSet, 0, nullptr);
+}
+
+static void Print(int32_t *result, int size) {
+  std::cout << "buffer started with size" << size << std::endl;
+  for (int i = 0; i < size; ++i) {
+    std::cout << result[i] << " ";
+  }
+  std::cout << "buffer ended" << std::endl;
+}
+static VkDescriptorSetLayoutBinding
+createDescriptorSetLayoutBinding(int descriptor) {
+  VkDescriptorSetLayoutBinding descriptorSetLayoutBindings;
+  descriptorSetLayoutBindings.binding = descriptor;
+  descriptorSetLayoutBindings.descriptorType =
+      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  descriptorSetLayoutBindings.descriptorCount = 1;
+  descriptorSetLayoutBindings.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  descriptorSetLayoutBindings.pImmutableSamplers = 0;
+  return descriptorSetLayoutBindings;
 }
 
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<int, std::vector<int32_t>> &vars) {
+  /*
+  // TODO: deduce needed info from vars.
   for (auto &op : module.getBlock()) {
     if (isa<spirv::VariableOp>(op)) {
       processVariable(dyn_cast<spirv::VariableOp>(op));
     }
   }
+  */
 
   auto instance = vulkanCreateInstance();
   uint32_t physicalDeviceCount = 0;
@@ -252,7 +296,6 @@ processModule(spirv::ModuleOp module,
         vkGetBestComputeQueueNPH(physicalDevices[0], &queueFamilyIndex));
 
     const float queuePrioritory = 1.0f;
-
     VkDeviceQueueCreateInfo deviceQueueCreateInfo;
     deviceQueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     deviceQueueCreateInfo.pNext = nullptr;
@@ -308,43 +351,48 @@ processModule(spirv::ModuleOp module,
       memoryBuffers.push_back(memoryBuffer);
     }
 
+    size_t size = 0;
     SmallVector<uint32_t, 0> binary;
+    uint32_t *shader =
+        ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
+                            "test/mlir-vulkan-runner/kernel.spv");
+    if (!shader) {
+      exit(0);
+    }
+    /*
     if (failed(spirv::serialize(module, binary))) {
       llvm::errs() << "can not serialize module" << '\n';
       return failure();
     }
+    */
 
-    uint64_t codeSize = binary.size() * sizeof(uint32_t);
+    uint64_t codeSize = size;
     VkShaderModuleCreateInfo shaderModuleCreateInfo;
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleCreateInfo.pNext = nullptr;
     shaderModuleCreateInfo.flags = 0;
     shaderModuleCreateInfo.codeSize = codeSize;
-    shaderModuleCreateInfo.pCode = binary.data();
+    shaderModuleCreateInfo.pCode = shader;
 
     VkShaderModule shader_module;
     BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shaderModuleCreateInfo, 0,
                                             &shader_module));
 
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings;
-    descriptorSetLayoutBindings.binding = 0;
-    descriptorSetLayoutBindings.descriptorType =
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorSetLayoutBindings.descriptorCount = 1;
-    descriptorSetLayoutBindings.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    descriptorSetLayoutBindings.pImmutableSamplers = 0;
+    std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
+    for (auto var : vars) {
+      descriptorSetLayoutBindings.push_back(
+          createDescriptorSetLayoutBinding(var.first));
+    }
 
-    std::cout << "mem buff size " << memoryBuffers.size() << std::endl;
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
     descriptorSetLayoutCreateInfo.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptorSetLayoutCreateInfo.pNext = nullptr;
     descriptorSetLayoutCreateInfo.flags = 0;
-    // Count of bindings
-    // FIXME;
-    descriptorSetLayoutCreateInfo.bindingCount = 1;
-    // TODO: Here should be an array of VkDescriptorSetLayoutBindings.
-    descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBindings;
+    descriptorSetLayoutCreateInfo.bindingCount =
+        descriptorSetLayoutBindings.size();
+    descriptorSetLayoutCreateInfo.pBindings =
+        descriptorSetLayoutBindings.data();
 
     VkDescriptorSetLayout descriptorSetLayout;
     BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
@@ -459,9 +507,9 @@ processModule(spirv::ModuleOp module,
                             pipelineLayout, 0, 1, &descriptorSet, 0, 0);
     vkCmdDispatch(commandBuffer, 1, 1, 1);
     BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+
     VkQueue queue;
     vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
-
     VkSubmitInfo submitInfo;
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.pNext = nullptr;
@@ -483,7 +531,9 @@ processModule(spirv::ModuleOp module,
                                      content.size() * sizeof(int32_t), 0,
                                      (void **)&payload));
       // TODO: Unmap?
+    //  Print(payload, content.size());
     }
+    std::cout << "End of pipeline" << std::endl;
   }
   return success();
 }
@@ -513,9 +563,10 @@ runOnModule(raw_ostream &os, ModuleOp module,
   return success();
 }
 
-static void PopulateData(std::unordered_map<int, std::vector<int32_t>> &vars) {
+static void PopulateData(std::unordered_map<int, std::vector<int32_t>> &vars,
+                         int count) {
   std::vector<int32_t> data = {1, 2, 3, 4};
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < count; ++i) {
     vars.insert({i, data});
   }
 }
@@ -541,7 +592,7 @@ int main(int argc, char **argv) {
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
   std::unordered_map<int, std::vector<int32_t>> variables;
-  PopulateData(variables);
+  PopulateData(variables, 3);
 
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
