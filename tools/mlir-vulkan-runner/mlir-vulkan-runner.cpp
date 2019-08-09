@@ -533,6 +533,19 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
   return failure();
 }
 
+static void
+checkResults(const VkDevice &device,
+             const std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
+             std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
+  for (auto memBuf : memoryBuffers) {
+    int32_t *payload;
+    size_t size = vars[memBuf.descriptor].size;
+    BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
+                                   (void **)&payload));
+    Print(payload, size);
+  }
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -582,19 +595,12 @@ processModule(spirv::ModuleOp module,
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
-
   auto commandBuffer = vulkanCreateAndDispatchCommandBuffer(
       device, commandPoolCreateInfo, descriptorSet, pipeline, pipelineLayout);
   vulkanSubmitDeviceQueue(device, commandBuffer, queueFamilyIndex);
 
-  for (auto memBuf : memoryBuffers) {
-    int32_t *payload;
-    size_t size = vars[memBuf.descriptor].size;
-    BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
-                                   (void **)&payload));
-    Print(payload, size);
-  }
-  std::cout << "End of pipeline" << std::endl;
+  // TODO: Fix this.
+  checkResults(device, memoryBuffers, vars);
   return success();
 }
 
