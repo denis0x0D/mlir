@@ -367,9 +367,10 @@ static LogicalResult createShaderModule(const VkDevice &device,
   return success();
 }
 
-static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
+static LogicalResult vulkanCreateDescriptorSetLayoutInfo(
     const VkDevice &device,
-    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings) {
+    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings,
+    VkDescriptorSetLayout &descriptorSetLayout) {
   VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
   descriptorSetLayoutCreateInfo.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -378,15 +379,15 @@ static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
   descriptorSetLayoutCreateInfo.bindingCount =
       descriptorSetLayoutBindings.size();
   descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
-  VkDescriptorSetLayout descriptorSetLayout;
   BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
       device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
-  return descriptorSetLayout;
+  return success();
 }
 
-static VkPipelineLayout
+static LogicalResult
 vulkanCreatePipelineLayout(const VkDevice &device,
-                           const VkDescriptorSetLayout &descriptorSetLayout) {
+                           const VkDescriptorSetLayout &descriptorSetLayout,
+                           VkPipelineLayout &pipelineLayout) {
   VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
   pipelineLayoutCreateInfo.sType =
       VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -396,15 +397,15 @@ vulkanCreatePipelineLayout(const VkDevice &device,
   pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
   pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
   pipelineLayoutCreateInfo.pPushConstantRanges = 0;
-  VkPipelineLayout pipelineLayout;
   BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
                                             0, &pipelineLayout));
-  return pipelineLayout;
+  return success();
 }
 
-static VkPipeline vulkanCreatePipeline(const VkDevice &device,
-                                       const VkPipelineLayout &pipelineLayout,
-                                       const VkShaderModule &shaderModule) {
+static LogicalResult
+vulkanCreatePipeline(const VkDevice &device,
+                     const VkPipelineLayout &pipelineLayout,
+                     const VkShaderModule &shaderModule, VkPipeline &pipeline) {
   // TODO: actual kernel name
   const char *kernel_name = "compute_kernel";
   VkPipelineShaderStageCreateInfo stageInfo;
@@ -425,16 +426,16 @@ static VkPipeline vulkanCreatePipeline(const VkDevice &device,
   computePipelineCreateInfo.layout = pipelineLayout;
   computePipelineCreateInfo.basePipelineHandle = 0;
   computePipelineCreateInfo.basePipelineIndex = 0;
-  VkPipeline pipeline;
   BAIL_ON_BAD_RESULT(vkCreateComputePipelines(
       device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
-  return pipeline;
+  return success();
 }
 
-static VkDescriptorPool
+static LogicalResult
 vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
                            uint32_t descriptorCount,
-                           VkCommandPoolCreateInfo &commandPoolCreateInfo) {
+                           VkCommandPoolCreateInfo &commandPoolCreateInfo,
+                           VkDescriptorPool &descriptorPool) {
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.pNext = nullptr;
   commandPoolCreateInfo.flags = 0;
@@ -450,16 +451,14 @@ vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
   descriptorPoolCreateInfo.maxSets = 1;
   descriptorPoolCreateInfo.poolSizeCount = 1;
   descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
-  VkDescriptorPool descriptorPool;
   BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
                                             0, &descriptorPool));
-  return descriptorPool;
+  return success();
 }
 
-static VkDescriptorSet
-vulkanAllocateDescriptorSets(const VkDevice &device,
-                             const VkDescriptorSetLayout &descriptorSetLayout,
-                             const VkDescriptorPool &descriptorPool) {
+static LogicalResult vulkanAllocateDescriptorSets(
+    const VkDevice &device, const VkDescriptorSetLayout &descriptorSetLayout,
+    const VkDescriptorPool &descriptorPool, VkDescriptorSet &descriptorSet) {
   VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
   descriptorSetAllocateInfo.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -468,17 +467,16 @@ vulkanAllocateDescriptorSets(const VkDevice &device,
   descriptorSetAllocateInfo.descriptorSetCount = 1;
   descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
 
-  VkDescriptorSet descriptorSet;
   BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(
       device, &descriptorSetAllocateInfo, &descriptorSet));
-  return descriptorSet;
+  return success();
 }
 
-static VkCommandBuffer vulkanCreateAndDispatchCommandBuffer(
+static LogicalResult vulkanCreateAndDispatchCommandBuffer(
     const VkDevice &device,
     const VkCommandPoolCreateInfo &commandPoolCreateInfo,
     const VkDescriptorSet &descriptorSet, const VkPipeline &pipeline,
-    const VkPipelineLayout &pipelineLayout) {
+    const VkPipelineLayout &pipelineLayout, VkCommandBuffer &commandBuffer) {
   VkCommandPool commandPool;
   BAIL_ON_BAD_RESULT(
       vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
@@ -490,7 +488,6 @@ static VkCommandBuffer vulkanCreateAndDispatchCommandBuffer(
   commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
   commandBufferAllocateInfo.commandBufferCount = 1;
 
-  VkCommandBuffer commandBuffer;
   BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(
       device, &commandBufferAllocateInfo, &commandBuffer));
 
@@ -508,7 +505,7 @@ static VkCommandBuffer vulkanCreateAndDispatchCommandBuffer(
   // Local global pool size.
   vkCmdDispatch(commandBuffer, 1, 1, 1);
   BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
-  return commandBuffer;
+  return success();
 }
 
 static LogicalResult
@@ -570,6 +567,7 @@ processModule(spirv::ModuleOp module,
   VkDevice device;
   vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex, memorySize,
                      device);
+
   // TODO: Refactor to single function.
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
   for (auto &var : vars) {
@@ -580,27 +578,41 @@ processModule(spirv::ModuleOp module,
 
   VkShaderModule shaderModule;
   createShaderModule(device, shaderModule);
+
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   for (auto var : vars) {
     descriptorSetLayoutBindings.push_back(
         createDescriptorSetLayoutBinding(var.first));
   }
-  auto descriptorSetLayout =
-      vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings);
-  auto pipelineLayout = vulkanCreatePipelineLayout(device, descriptorSetLayout);
-  auto pipeline = vulkanCreatePipeline(device, pipelineLayout, shaderModule);
+
+  VkDescriptorSetLayout descriptorSetLayout;
+  vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings,
+                                      descriptorSetLayout);
+  VkPipelineLayout pipelineLayout;
+  vulkanCreatePipelineLayout(device, descriptorSetLayout, pipelineLayout);
+
+  VkPipeline pipeline;
+  vulkanCreatePipeline(device, pipelineLayout, shaderModule, pipeline);
+
   VkCommandPoolCreateInfo commandPoolCreateInfo;
-  auto descriptorPool = vulkanCreateDescriptorPool(
-      device, queueFamilyIndex, memoryBuffers.size(), commandPoolCreateInfo);
-  auto descriptorSet =
-      vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool);
+  VkDescriptorPool descriptorPool;
+  vulkanCreateDescriptorPool(device, queueFamilyIndex, memoryBuffers.size(),
+                             commandPoolCreateInfo, descriptorPool);
+
+  VkDescriptorSet descriptorSet;
+  vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool,
+                               descriptorSet);
+
   // TODO: Move to function.
   for (auto memoryBuffer : memoryBuffers) {
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
-  auto commandBuffer = vulkanCreateAndDispatchCommandBuffer(
-      device, commandPoolCreateInfo, descriptorSet, pipeline, pipelineLayout);
+  VkCommandBuffer commandBuffer;
+  vulkanCreateAndDispatchCommandBuffer(device, commandPoolCreateInfo,
+                                       descriptorSet, pipeline, pipelineLayout,
+                                       commandBuffer);
+
   vulkanSubmitDeviceQueue(device, commandBuffer, queueFamilyIndex);
 
   // TODO: Fix this.
