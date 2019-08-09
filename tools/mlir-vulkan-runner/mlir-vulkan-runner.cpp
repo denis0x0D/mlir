@@ -55,7 +55,18 @@ using namespace mlir;
 using namespace llvm;
 using Descriptor = int32_t;
 
-#define BAIL_ON_BAD_RESULT(result)                                             \
+inline void emit_vulkan_error(const llvm::Twine &message, VkResult error) {
+  llvm::errs()
+      << message.concat(" failed with error code ").concat(llvm::Twine{error});
+}
+
+#define RETURN_ON_VULKAN_ERROR(result, msg)                                    \
+  if ((result) != VK_SUCCESS) {                                                \
+    emit_vulkan_error(msg, (result));                                          \
+    return failure();                                                          \
+  }
+
+#define RETURN_ON_VULKAN_ERROR(result)                                             \
   if (VK_SUCCESS != (result)) {                                                \
     fprintf(stderr, "Failure at %u %s\n", __LINE__, __FILE__);                 \
     fprintf(stderr, "Exit code %d\n", result);                                 \
@@ -182,7 +193,7 @@ static LogicalResult vulkanCreateInstance(VkInstance &instance) {
   instanceCreateInfo.enabledExtensionCount = 0;
   instanceCreateInfo.ppEnabledExtensionNames = 0;
 
-  BAIL_ON_BAD_RESULT(vkCreateInstance(&instanceCreateInfo, 0, &instance));
+  RETURN_ON_VULKAN_ERROR(vkCreateInstance(&instanceCreateInfo, 0, &instance));
   return success();
 }
 
@@ -201,11 +212,11 @@ createMemoryBuffer(const VkDevice &device,
   memoryAllocateInfo.allocationSize = bufferSize;
   memoryAllocateInfo.memoryTypeIndex = memoryContext.memoryTypeIndex;
   // Allocate the device memory.
-  BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0,
+  RETURN_ON_VULKAN_ERROR(vkAllocateMemory(device, &memoryAllocateInfo, 0,
                                       &memoryBuffer.deviceMemory));
 
   void *payload;
-  BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
+  RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                  bufferSize, 0, (void **)&payload));
   // TODO: eliminate memcpy?
   memcpy(payload, var.second.ptr, var.second.size);
@@ -220,9 +231,9 @@ createMemoryBuffer(const VkDevice &device,
   bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   bufferCreateInfo.queueFamilyIndexCount = 1;
   bufferCreateInfo.pQueueFamilyIndices = &memoryContext.queueFamilyIndex;
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer));
-  BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, memoryBuffer.buffer,
+  RETURN_ON_VULKAN_ERROR(vkBindBufferMemory(device, memoryBuffer.buffer,
                                         memoryBuffer.deviceMemory, 0));
   return memoryBuffer;
 }
@@ -257,11 +268,11 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
                                         VulkanMemoryContext &memoryContext,
                                         VkDevice &device) {
   uint32_t physicalDeviceCount = 0;
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
 
   std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
-  BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
+  RETURN_ON_VULKAN_ERROR(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
                                                 physicalDevices.data()));
 
   if (!physicalDeviceCount) {
@@ -294,7 +305,7 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   deviceCreateInfo.ppEnabledExtensionNames = nullptr;
   deviceCreateInfo.pEnabledFeatures = nullptr;
 
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
 
   VkPhysicalDeviceMemoryProperties properties;
@@ -315,7 +326,7 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
     }
   }
 
-  BAIL_ON_BAD_RESULT(memoryContext.memoryTypeIndex == VK_MAX_MEMORY_TYPES
+  RETURN_ON_VULKAN_ERROR(memoryContext.memoryTypeIndex == VK_MAX_MEMORY_TYPES
                          ? VK_ERROR_OUT_OF_HOST_MEMORY
                          : VK_SUCCESS);
   return success();
@@ -344,7 +355,7 @@ static LogicalResult createShaderModule(const VkDevice &device,
   shaderModuleCreateInfo.flags = 0;
   shaderModuleCreateInfo.codeSize = size;
   shaderModuleCreateInfo.pCode = shader;
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule));
   return success();
 }
@@ -361,7 +372,7 @@ static LogicalResult vulkanCreateDescriptorSetLayoutInfo(
   descriptorSetLayoutCreateInfo.bindingCount =
       descriptorSetLayoutBindings.size();
   descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
-  BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(
+  RETURN_ON_VULKAN_ERROR(vkCreateDescriptorSetLayout(
       device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
   return success();
 }
@@ -379,7 +390,7 @@ vulkanCreatePipelineLayout(const VkDevice &device,
   pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
   pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
   pipelineLayoutCreateInfo.pPushConstantRanges = 0;
-  BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
+  RETURN_ON_VULKAN_ERROR(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
                                             0, &pipelineLayout));
   return success();
 }
@@ -408,7 +419,7 @@ vulkanCreatePipeline(const VkDevice &device,
   computePipelineCreateInfo.layout = pipelineLayout;
   computePipelineCreateInfo.basePipelineHandle = 0;
   computePipelineCreateInfo.basePipelineIndex = 0;
-  BAIL_ON_BAD_RESULT(vkCreateComputePipelines(
+  RETURN_ON_VULKAN_ERROR(vkCreateComputePipelines(
       device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
   return success();
 }
@@ -433,7 +444,7 @@ vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
   descriptorPoolCreateInfo.maxSets = 1;
   descriptorPoolCreateInfo.poolSizeCount = 1;
   descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
-  BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
+  RETURN_ON_VULKAN_ERROR(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
                                             0, &descriptorPool));
   return success();
 }
@@ -449,7 +460,7 @@ static LogicalResult vulkanAllocateDescriptorSets(
   descriptorSetAllocateInfo.descriptorSetCount = 1;
   descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
 
-  BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(
+  RETURN_ON_VULKAN_ERROR(vkAllocateDescriptorSets(
       device, &descriptorSetAllocateInfo, &descriptorSet));
   return success();
 }
@@ -460,7 +471,7 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
     const VkDescriptorSet &descriptorSet, const VkPipeline &pipeline,
     const VkPipelineLayout &pipelineLayout, VkCommandBuffer &commandBuffer) {
   VkCommandPool commandPool;
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
   VkCommandBufferAllocateInfo commandBufferAllocateInfo;
   commandBufferAllocateInfo.sType =
@@ -470,7 +481,7 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
   commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
   commandBufferAllocateInfo.commandBufferCount = 1;
 
-  BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(
+  RETURN_ON_VULKAN_ERROR(vkAllocateCommandBuffers(
       device, &commandBufferAllocateInfo, &commandBuffer));
 
   VkCommandBufferBeginInfo commandBufferBeginInfo;
@@ -479,14 +490,14 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
   commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   commandBufferBeginInfo.pInheritanceInfo = 0;
 
-  BAIL_ON_BAD_RESULT(
+  RETURN_ON_VULKAN_ERROR(
       vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                           pipelineLayout, 0, 1, &descriptorSet, 0, 0);
   // Local global pool size.
   vkCmdDispatch(commandBuffer, 1, 1, 1);
-  BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+  RETURN_ON_VULKAN_ERROR(vkEndCommandBuffer(commandBuffer));
   return success();
 }
 
@@ -506,8 +517,8 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
   submitInfo.pCommandBuffers = &commandBuffer;
   submitInfo.signalSemaphoreCount = 0;
   submitInfo.pSignalSemaphores = nullptr;
-  BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
-  BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+  RETURN_ON_VULKAN_ERROR(vkQueueSubmit(queue, 1, &submitInfo, 0));
+  RETURN_ON_VULKAN_ERROR(vkQueueWaitIdle(queue));
   return failure();
 }
 
@@ -518,7 +529,7 @@ checkResults(const VkDevice &device,
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
     size_t size = vars[memBuf.descriptor].size;
-    BAIL_ON_BAD_RESULT(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
+    RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
                                    (void **)&payload));
     Print(payload, size);
   }
@@ -579,6 +590,7 @@ processModule(spirv::ModuleOp module,
     }
   }
   */
+
   VulkanMemoryContext memoryContext;
   initMemoryContext(vars, memoryContext);
 
