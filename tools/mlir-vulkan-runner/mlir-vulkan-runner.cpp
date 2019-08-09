@@ -45,7 +45,6 @@
 
 #include <cstdint>
 #include <iostream>
-#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <iostream>
@@ -134,8 +133,9 @@ vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
   uint32_t queueFamilyPropertiesCount = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
-  std::vector<VkQueueFamilyProperties> queueFamilyProperties(
+  SmallVector<VkQueueFamilyProperties, 4> queueFamilyProperties(
       queueFamilyPropertiesCount);
+
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount,
                                            queueFamilyProperties.data());
@@ -236,7 +236,7 @@ createMemoryBuffer(const VkDevice &device,
 
 static void createDescriptorBufferInfoAndUpdateDesriptorSets(
     const VkDevice &device,
-    std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
+    llvm::ArrayRef<VulkanDeviceMemoryBuffer> memoryBuffers,
     VkDescriptorSet &descriptorSet) {
 
   for (auto memoryBuffer : memoryBuffers) {
@@ -268,7 +268,7 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0),
       "vkEnumeratePhysicalDevices");
 
-  std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
+  llvm::SmallVector<VkPhysicalDevice, 4> physicalDevices(physicalDeviceCount);
   RETURN_ON_VULKAN_ERROR(vkEnumeratePhysicalDevices(instance,
                                                     &physicalDeviceCount,
                                                     physicalDevices.data()),
@@ -278,7 +278,8 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
                          "physicalDeviceCount");
 
   // TODO(denis0x0D): find the best device.
-  vkGetBestComputeQueueNPH(physicalDevices[0], memoryContext.queueFamilyIndex);
+  vkGetBestComputeQueueNPH(physicalDevices.front(),
+                           memoryContext.queueFamilyIndex);
 
   const float queuePrioritory = 1.0f;
   VkDeviceQueueCreateInfo deviceQueueCreateInfo;
@@ -303,11 +304,11 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   deviceCreateInfo.pEnabledFeatures = nullptr;
 
   RETURN_ON_VULKAN_ERROR(
-      vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device),
+      vkCreateDevice(physicalDevices.front(), &deviceCreateInfo, 0, &device),
       "vkCreateDevice");
 
   VkPhysicalDeviceMemoryProperties properties;
-  vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
+  vkGetPhysicalDeviceMemoryProperties(physicalDevices.front(), &properties);
 
   for (uint32_t memoryTypeIndex = 0;
        memoryTypeIndex < properties.memoryTypeCount; ++memoryTypeIndex) {
@@ -362,7 +363,7 @@ static LogicalResult createShaderModule(const VkDevice &device,
 
 static LogicalResult vulkanCreateDescriptorSetLayoutInfo(
     const VkDevice &device,
-    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings,
+    ArrayRef<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings,
     VkDescriptorSetLayout &descriptorSetLayout) {
   VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
   descriptorSetLayoutCreateInfo.sType =
@@ -540,7 +541,7 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
 
 static LogicalResult
 checkResults(const VkDevice &device,
-             const std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
+             llvm::ArrayRef<VulkanDeviceMemoryBuffer> memoryBuffers,
              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
@@ -556,9 +557,10 @@ static LogicalResult vulkanCreateMemoryBuffers(
     const VkDevice &device,
     llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
     const VulkanMemoryContext &memoryContext,
-    std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers) {
+    llvm::SmallVectorImpl<VulkanDeviceMemoryBuffer> &memoryBuffers) {
   for (auto &var : vars) {
     VulkanDeviceMemoryBuffer memoryBuffer;
+    // TODO: Move to this place.
     createMemoryBuffer(device, var, memoryContext, memoryBuffer);
     memoryBuffers.push_back(memoryBuffer);
   }
@@ -566,8 +568,9 @@ static LogicalResult vulkanCreateMemoryBuffers(
 }
 
 static void initDescriptorSetLayoutBindings(
-    const std::vector<VulkanDeviceMemoryBuffer> &memBuffers,
-    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings) {
+    llvm::ArrayRef<VulkanDeviceMemoryBuffer> memBuffers,
+    llvm::SmallVectorImpl<VkDescriptorSetLayoutBinding>
+        &descriptorSetLayoutBindings) {
   for (auto memBuffer : memBuffers) {
     VkDescriptorSetLayoutBinding descriptorSetLayoutBinding;
     // Actual descriptor.
@@ -611,40 +614,50 @@ processModule(spirv::ModuleOp module,
   if (failed(countMemorySize(vars, memoryContext))) {
     return failure();
   }
+
   VkInstance instance;
   if (failed(vulkanCreateInstance(instance))) {
     return failure();
   }
+
   VkDevice device;
   if (failed(vulkanCreateDevice(instance, memoryContext, device))) {
     return failure();
   }
-  std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
+
+  llvm::SmallVector<VulkanDeviceMemoryBuffer, 16> memoryBuffers;
   if (failed(vulkanCreateMemoryBuffers(device, vars, memoryContext,
                                        memoryBuffers))) {
     return failure();
   }
+
   VkShaderModule shaderModule;
   if (failed(createShaderModule(device, shaderModule))) {
     return failure();
   }
-  std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
+
+  llvm::SmallVector<VkDescriptorSetLayoutBinding, 16>
+      descriptorSetLayoutBindings;
   initDescriptorSetLayoutBindings(memoryBuffers, descriptorSetLayoutBindings);
+  
   VkDescriptorSetLayout descriptorSetLayout;
   if (failed(vulkanCreateDescriptorSetLayoutInfo(
           device, descriptorSetLayoutBindings, descriptorSetLayout))) {
     return failure();
   }
+
   VkPipelineLayout pipelineLayout;
   if (failed(vulkanCreatePipelineLayout(device, descriptorSetLayout,
                                         pipelineLayout))) {
     return failure();
   }
+
   VkPipeline pipeline;
   if (failed(vulkanCreatePipeline(device, pipelineLayout, shaderModule,
                                   pipeline))) {
     return failure();
   }
+
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   VkDescriptorPool descriptorPool;
   if (failed(vulkanCreateDescriptorPool(
@@ -652,6 +665,7 @@ processModule(spirv::ModuleOp module,
           commandPoolCreateInfo, descriptorPool))) {
     return failure();
   }
+
   VkDescriptorSet descriptorSet;
   if (failed(vulkanAllocateDescriptorSets(device, descriptorSetLayout,
                                           descriptorPool, descriptorSet))) {
