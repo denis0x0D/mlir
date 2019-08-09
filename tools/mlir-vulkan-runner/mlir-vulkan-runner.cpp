@@ -150,7 +150,7 @@ vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
   return failure();
 }
 
-static VkInstance vulkanCreateInstance() {
+static LogicalResult vulkanCreateInstance(VkInstance &instance) {
   VkApplicationInfo applicationInfo;
   applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   applicationInfo.pNext = nullptr;
@@ -170,19 +170,21 @@ static VkInstance vulkanCreateInstance() {
   instanceCreateInfo.enabledExtensionCount = 0;
   instanceCreateInfo.ppEnabledExtensionNames = 0;
 
-  VkInstance instance;
   BAIL_ON_BAD_RESULT(vkCreateInstance(&instanceCreateInfo, 0, &instance));
-  return instance;
+  return success();
 }
 
-static size_t
-getMemorySize(std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
-  size_t count = 0;
+static LogicalResult
+getMemorySize(const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+              VkDeviceSize &size) {
   for (auto var : vars) {
-    // TODO: Here should be a type.
-    count += var.second.size;
+    if (var.second.size) {
+      size += var.second.size;
+    } else {
+      return failure();
+    }
   }
-  return count;
+  return success();
 }
 
 static VulkanDeviceMemoryBuffer
@@ -585,22 +587,18 @@ processModule(spirv::ModuleOp module,
     }
   }
   */
+  VkDeviceSize memorySize;
+  getMemorySize(vars, memorySize);
 
   uint32_t memoryTypeIndex, queueFamilyIndex;
-  auto instance = vulkanCreateInstance();
-  const VkDeviceSize memorySize = getMemorySize(vars);
 
-  if (!memorySize) {
-    // TODO: Update for better formating.
-    return failure();
-  }
+  VkInstance instance;
+  vulkanCreateInstance(instance);
 
-  // TODO: return type is LogicalResult
   VkDevice device;
   vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex, memorySize,
                      device);
 
-  // TODO: Refactor to single function.
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
   vulkanCreateMemoryBuffers(device, vars, memoryTypeIndex, queueFamilyIndex,
                             memoryBuffers);
