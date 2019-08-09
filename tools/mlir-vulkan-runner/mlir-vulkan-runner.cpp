@@ -66,13 +66,6 @@ inline void emit_vulkan_error(const llvm::Twine &message, VkResult error) {
     return failure();                                                          \
   }
 
-#define RETURN_ON_VULKAN_ERROR(result)                                             \
-  if (VK_SUCCESS != (result)) {                                                \
-    fprintf(stderr, "Failure at %u %s\n", __LINE__, __FILE__);                 \
-    fprintf(stderr, "Exit code %d\n", result);                                 \
-    exit(-1);                                                                  \
-  }
-
 static cl::opt<std::string>
     inputFilename(cl::Positional, cl::desc("<input file>"), cl::init("-"));
 
@@ -193,15 +186,16 @@ static LogicalResult vulkanCreateInstance(VkInstance &instance) {
   instanceCreateInfo.enabledExtensionCount = 0;
   instanceCreateInfo.ppEnabledExtensionNames = 0;
 
-  RETURN_ON_VULKAN_ERROR(vkCreateInstance(&instanceCreateInfo, 0, &instance));
+  RETURN_ON_VULKAN_ERROR(vkCreateInstance(&instanceCreateInfo, 0, &instance),
+                         "vkCreateInstance");
   return success();
 }
 
-static VulkanDeviceMemoryBuffer
+static LogicalResult
 createMemoryBuffer(const VkDevice &device,
                    std::pair<Descriptor, VulkanBufferContent> var,
-                   const VulkanMemoryContext &memoryContext) {
-  VulkanDeviceMemoryBuffer memoryBuffer;
+                   const VulkanMemoryContext &memoryContext,
+                   VulkanDeviceMemoryBuffer &memoryBuffer) {
   memoryBuffer.descriptor = var.first;
   // TODO: Check that the size is not 0, because it will fail.
   const int64_t bufferSize = var.second.size;
@@ -213,11 +207,12 @@ createMemoryBuffer(const VkDevice &device,
   memoryAllocateInfo.memoryTypeIndex = memoryContext.memoryTypeIndex;
   // Allocate the device memory.
   RETURN_ON_VULKAN_ERROR(vkAllocateMemory(device, &memoryAllocateInfo, 0,
-                                      &memoryBuffer.deviceMemory));
-
+                                          &memoryBuffer.deviceMemory),
+                         "vkAllocateMemory");
   void *payload;
   RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
-                                 bufferSize, 0, (void **)&payload));
+                                     bufferSize, 0, (void **)&payload),
+                         "vkMapMemory");
   // TODO: eliminate memcpy?
   memcpy(payload, var.second.ptr, var.second.size);
   vkUnmapMemory(device, memoryBuffer.deviceMemory);
@@ -232,10 +227,12 @@ createMemoryBuffer(const VkDevice &device,
   bufferCreateInfo.queueFamilyIndexCount = 1;
   bufferCreateInfo.pQueueFamilyIndices = &memoryContext.queueFamilyIndex;
   RETURN_ON_VULKAN_ERROR(
-      vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer));
+      vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer),
+      "vkCreateBuffer");
   RETURN_ON_VULKAN_ERROR(vkBindBufferMemory(device, memoryBuffer.buffer,
-                                        memoryBuffer.deviceMemory, 0));
-  return memoryBuffer;
+                                            memoryBuffer.deviceMemory, 0),
+                         "vkBindBufferMemory");
+  return success();
 }
 
 static void createDescriptorBufferInfoAndUpdateDesriptorSets(
@@ -269,11 +266,14 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
                                         VkDevice &device) {
   uint32_t physicalDeviceCount = 0;
   RETURN_ON_VULKAN_ERROR(
-      vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
+      vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0),
+      "vkEnumeratePhysicalDevices");
 
   std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
-  RETURN_ON_VULKAN_ERROR(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
-                                                physicalDevices.data()));
+  RETURN_ON_VULKAN_ERROR(vkEnumeratePhysicalDevices(instance,
+                                                    &physicalDeviceCount,
+                                                    physicalDevices.data()),
+                         "vkEnumeratePhysicalDevices");
 
   if (!physicalDeviceCount) {
     // TOOD: generate an error message.
@@ -306,7 +306,8 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   deviceCreateInfo.pEnabledFeatures = nullptr;
 
   RETURN_ON_VULKAN_ERROR(
-      vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
+      vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device),
+      "vkCreateDevice");
 
   VkPhysicalDeviceMemoryProperties properties;
   vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
@@ -327,8 +328,9 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   }
 
   RETURN_ON_VULKAN_ERROR(memoryContext.memoryTypeIndex == VK_MAX_MEMORY_TYPES
-                         ? VK_ERROR_OUT_OF_HOST_MEMORY
-                         : VK_SUCCESS);
+                             ? VK_ERROR_OUT_OF_HOST_MEMORY
+                             : VK_SUCCESS,
+                         "memoryTypeIndex");
   return success();
 }
 
@@ -356,7 +358,8 @@ static LogicalResult createShaderModule(const VkDevice &device,
   shaderModuleCreateInfo.codeSize = size;
   shaderModuleCreateInfo.pCode = shader;
   RETURN_ON_VULKAN_ERROR(
-      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule));
+      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule),
+      "vkCreateShaderModule");
   return success();
 }
 
@@ -372,8 +375,10 @@ static LogicalResult vulkanCreateDescriptorSetLayoutInfo(
   descriptorSetLayoutCreateInfo.bindingCount =
       descriptorSetLayoutBindings.size();
   descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings.data();
-  RETURN_ON_VULKAN_ERROR(vkCreateDescriptorSetLayout(
-      device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout));
+  RETURN_ON_VULKAN_ERROR(
+      vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, 0,
+                                  &descriptorSetLayout),
+      "vkCreateDescriptorSetLayout");
   return success();
 }
 
@@ -390,8 +395,10 @@ vulkanCreatePipelineLayout(const VkDevice &device,
   pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
   pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
   pipelineLayoutCreateInfo.pPushConstantRanges = 0;
-  RETURN_ON_VULKAN_ERROR(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo,
-                                            0, &pipelineLayout));
+  RETURN_ON_VULKAN_ERROR(vkCreatePipelineLayout(device,
+                                                &pipelineLayoutCreateInfo, 0,
+                                                &pipelineLayout),
+                         "vkCreatePipelineLayout");
   return success();
 }
 
@@ -419,8 +426,10 @@ vulkanCreatePipeline(const VkDevice &device,
   computePipelineCreateInfo.layout = pipelineLayout;
   computePipelineCreateInfo.basePipelineHandle = 0;
   computePipelineCreateInfo.basePipelineIndex = 0;
-  RETURN_ON_VULKAN_ERROR(vkCreateComputePipelines(
-      device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
+  RETURN_ON_VULKAN_ERROR(vkCreateComputePipelines(device, 0, 1,
+                                                  &computePipelineCreateInfo, 0,
+                                                  &pipeline),
+                         "vkCreateComputePipelines");
   return success();
 }
 
@@ -444,8 +453,10 @@ vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
   descriptorPoolCreateInfo.maxSets = 1;
   descriptorPoolCreateInfo.poolSizeCount = 1;
   descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
-  RETURN_ON_VULKAN_ERROR(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo,
-                                            0, &descriptorPool));
+  RETURN_ON_VULKAN_ERROR(vkCreateDescriptorPool(device,
+                                                &descriptorPoolCreateInfo, 0,
+                                                &descriptorPool),
+                         "vkCreateDescriptorPool");
   return success();
 }
 
@@ -460,8 +471,10 @@ static LogicalResult vulkanAllocateDescriptorSets(
   descriptorSetAllocateInfo.descriptorSetCount = 1;
   descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
 
-  RETURN_ON_VULKAN_ERROR(vkAllocateDescriptorSets(
-      device, &descriptorSetAllocateInfo, &descriptorSet));
+  RETURN_ON_VULKAN_ERROR(vkAllocateDescriptorSets(device,
+                                                  &descriptorSetAllocateInfo,
+                                                  &descriptorSet),
+                         "vkAllocateDescriptorSets");
   return success();
 }
 
@@ -472,7 +485,9 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
     const VkPipelineLayout &pipelineLayout, VkCommandBuffer &commandBuffer) {
   VkCommandPool commandPool;
   RETURN_ON_VULKAN_ERROR(
-      vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
+      vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool),
+      "vkCreateCommandPool");
+
   VkCommandBufferAllocateInfo commandBufferAllocateInfo;
   commandBufferAllocateInfo.sType =
       VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -480,9 +495,10 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
   commandBufferAllocateInfo.commandPool = commandPool;
   commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
   commandBufferAllocateInfo.commandBufferCount = 1;
-
-  RETURN_ON_VULKAN_ERROR(vkAllocateCommandBuffers(
-      device, &commandBufferAllocateInfo, &commandBuffer));
+  RETURN_ON_VULKAN_ERROR(vkAllocateCommandBuffers(device,
+                                                  &commandBufferAllocateInfo,
+                                                  &commandBuffer),
+                         "vkAllocateCommandBuffers");
 
   VkCommandBufferBeginInfo commandBufferBeginInfo;
   commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -491,13 +507,15 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
   commandBufferBeginInfo.pInheritanceInfo = 0;
 
   RETURN_ON_VULKAN_ERROR(
-      vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
+      vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo),
+      "vkBeginCommandBuffer");
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                           pipelineLayout, 0, 1, &descriptorSet, 0, 0);
   // Local global pool size.
   vkCmdDispatch(commandBuffer, 1, 1, 1);
-  RETURN_ON_VULKAN_ERROR(vkEndCommandBuffer(commandBuffer));
+  RETURN_ON_VULKAN_ERROR(vkEndCommandBuffer(commandBuffer),
+                         "vkEndCommandBuffer");
   return success();
 }
 
@@ -517,20 +535,22 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
   submitInfo.pCommandBuffers = &commandBuffer;
   submitInfo.signalSemaphoreCount = 0;
   submitInfo.pSignalSemaphores = nullptr;
-  RETURN_ON_VULKAN_ERROR(vkQueueSubmit(queue, 1, &submitInfo, 0));
-  RETURN_ON_VULKAN_ERROR(vkQueueWaitIdle(queue));
-  return failure();
+  RETURN_ON_VULKAN_ERROR(vkQueueSubmit(queue, 1, &submitInfo, 0),
+                         "vkQueueSubmit");
+  RETURN_ON_VULKAN_ERROR(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+  return success();
 }
 
-static void
+static LogicalResult
 checkResults(const VkDevice &device,
              const std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
              std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
     size_t size = vars[memBuf.descriptor].size;
-    RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memBuf.deviceMemory, 0, size, 0,
-                                   (void **)&payload));
+    RETURN_ON_VULKAN_ERROR(
+        vkMapMemory(device, memBuf.deviceMemory, 0, size, 0, (void **)&payload),
+        "map memory");
     Print(payload, size);
   }
 }
@@ -541,7 +561,8 @@ static LogicalResult vulkanCreateMemoryBuffers(
     const VulkanMemoryContext &memoryContext,
     std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers) {
   for (auto &var : vars) {
-    auto memoryBuffer = createMemoryBuffer(device, var, memoryContext);
+    VulkanDeviceMemoryBuffer memoryBuffer;
+    createMemoryBuffer(device, var, memoryContext, memoryBuffer);
     memoryBuffers.push_back(memoryBuffer);
   }
   return success();
