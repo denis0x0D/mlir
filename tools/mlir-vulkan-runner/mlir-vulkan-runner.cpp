@@ -82,6 +82,14 @@ static void processVariable(spirv::VariableOp varOp) {
   }
 }
 
+static void Print(int32_t *result, int size) {
+  std::cout << "buffer started with size" << size << std::endl;
+  for (int i = 0; i < size; ++i) {
+    std::cout << result[i] << " ";
+  }
+  std::cout << "buffer ended" << std::endl;
+}
+
 static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
   if (!filename_to_read)
     return nullptr;
@@ -106,15 +114,19 @@ struct VulkanDeviceMemoryBuffer {
 };
 
 struct VulkanBufferContent {
-  // Pointer to the host memory
   void *ptr;
-  // Size in bytes
   int64_t size;
+};
+
+struct VulkanMemoryContext {
+  uint32_t queueFamilyIndex;
+  uint32_t memoryTypeIndex;
+  VkDeviceSize memorySize;
 };
 
 static LogicalResult
 vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
-                         uint32_t *queueFamilyIndex) {
+                         uint32_t &queueFamilyIndex) {
   uint32_t queueFamilyPropertiesCount = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
@@ -131,7 +143,7 @@ vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
 
     if (!(VK_QUEUE_GRAPHICS_BIT & maskedFlags) &&
         (VK_QUEUE_COMPUTE_BIT & maskedFlags)) {
-      *queueFamilyIndex = i;
+      queueFamilyIndex = i;
       return success();
     }
   }
@@ -143,7 +155,7 @@ vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
          queueFamilyProperties[i].queueFlags);
 
     if (VK_QUEUE_COMPUTE_BIT & maskedFlags) {
-      *queueFamilyIndex = i;
+      queueFamilyIndex = i;
       return success();
     }
   }
@@ -174,23 +186,10 @@ static LogicalResult vulkanCreateInstance(VkInstance &instance) {
   return success();
 }
 
-static LogicalResult
-getMemorySize(const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
-              VkDeviceSize &size) {
-  for (auto var : vars) {
-    if (var.second.size) {
-      size += var.second.size;
-    } else {
-      return failure();
-    }
-  }
-  return success();
-}
-
 static VulkanDeviceMemoryBuffer
 createMemoryBuffer(const VkDevice &device,
                    std::pair<Descriptor, VulkanBufferContent> var,
-                   uint32_t memoryTypeIndex, uint32_t queueFamilyIndex) {
+                   const VulkanMemoryContext &memoryContext) {
   VulkanDeviceMemoryBuffer memoryBuffer;
   memoryBuffer.descriptor = var.first;
   // TODO: Check that the size is not 0, because it will fail.
@@ -200,7 +199,7 @@ createMemoryBuffer(const VkDevice &device,
   memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   memoryAllocateInfo.pNext = nullptr;
   memoryAllocateInfo.allocationSize = bufferSize;
-  memoryAllocateInfo.memoryTypeIndex = memoryTypeIndex;
+  memoryAllocateInfo.memoryTypeIndex = memoryContext.memoryTypeIndex;
   // Allocate the device memory.
   BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0,
                                       &memoryBuffer.deviceMemory));
@@ -220,7 +219,7 @@ createMemoryBuffer(const VkDevice &device,
   bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
   bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   bufferCreateInfo.queueFamilyIndexCount = 1;
-  bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
+  bufferCreateInfo.pQueueFamilyIndices = &memoryContext.queueFamilyIndex;
   BAIL_ON_BAD_RESULT(
       vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer));
   BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, memoryBuffer.buffer,
@@ -255,13 +254,12 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSets(
 }
 
 static LogicalResult vulkanCreateDevice(const VkInstance &instance,
-                                        uint32_t &memoryTypeIndex,
-                                        uint32_t &queueFamilyIndex,
-                                        const VkDeviceSize memorySize,
+                                        VulkanMemoryContext &memoryContext,
                                         VkDevice &device) {
   uint32_t physicalDeviceCount = 0;
   BAIL_ON_BAD_RESULT(
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
+
   std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
   BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
                                                 physicalDevices.data()));
@@ -271,15 +269,15 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
     return failure();
   }
 
-  queueFamilyIndex = 0;
-  vkGetBestComputeQueueNPH(physicalDevices[0], &queueFamilyIndex);
+  // TODO: find the best device.
+  vkGetBestComputeQueueNPH(physicalDevices[0], memoryContext.queueFamilyIndex);
 
   const float queuePrioritory = 1.0f;
   VkDeviceQueueCreateInfo deviceQueueCreateInfo;
   deviceQueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
   deviceQueueCreateInfo.pNext = nullptr;
   deviceQueueCreateInfo.flags = 0;
-  deviceQueueCreateInfo.queueFamilyIndex = queueFamilyIndex;
+  deviceQueueCreateInfo.queueFamilyIndex = memoryContext.queueFamilyIndex;
   deviceQueueCreateInfo.queueCount = 1;
   deviceQueueCreateInfo.pQueuePriorities = &queuePrioritory;
 
@@ -298,50 +296,29 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
 
   BAIL_ON_BAD_RESULT(
       vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
-  VkPhysicalDeviceMemoryProperties properties;
-  // TODO: better way to take device.
-  vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
-  memoryTypeIndex = VK_MAX_MEMORY_TYPES;
 
-  // Find valid memory types.
-  // TODO: Update it be indexing.
-  for (uint32_t k = 0; k < properties.memoryTypeCount; k++) {
+  VkPhysicalDeviceMemoryProperties properties;
+  vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
+
+  for (uint32_t memoryTypeIndex = 0;
+       memoryTypeIndex < properties.memoryTypeCount; ++memoryTypeIndex) {
     if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT &
-         properties.memoryTypes[k].propertyFlags) &&
+         properties.memoryTypes[memoryTypeIndex].propertyFlags) &&
         (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT &
-         properties.memoryTypes[k].propertyFlags) &&
-        (memorySize <
-         properties.memoryHeaps[properties.memoryTypes[k].heapIndex].size)) {
-      memoryTypeIndex = k;
+         properties.memoryTypes[memoryTypeIndex].propertyFlags) &&
+        (memoryContext.memorySize <
+         properties
+             .memoryHeaps[properties.memoryTypes[memoryTypeIndex].heapIndex]
+             .size)) {
+      memoryContext.memoryTypeIndex = memoryTypeIndex;
       break;
     }
   }
 
-  // Chech the memory type index.
-  BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES
+  BAIL_ON_BAD_RESULT(memoryContext.memoryTypeIndex == VK_MAX_MEMORY_TYPES
                          ? VK_ERROR_OUT_OF_HOST_MEMORY
                          : VK_SUCCESS);
   return success();
-}
-
-static void Print(int32_t *result, int size) {
-  std::cout << "buffer started with size" << size << std::endl;
-  for (int i = 0; i < size; ++i) {
-    std::cout << result[i] << " ";
-  }
-  std::cout << "buffer ended" << std::endl;
-}
-
-static VkDescriptorSetLayoutBinding
-createDescriptorSetLayoutBinding(Descriptor descriptor) {
-  VkDescriptorSetLayoutBinding descriptorSetLayoutBindings;
-  descriptorSetLayoutBindings.binding = descriptor;
-  descriptorSetLayoutBindings.descriptorType =
-      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorSetLayoutBindings.descriptorCount = 1;
-  descriptorSetLayoutBindings.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-  descriptorSetLayoutBindings.pImmutableSamplers = 0;
-  return descriptorSetLayoutBindings;
 }
 
 static LogicalResult createShaderModule(const VkDevice &device,
@@ -550,11 +527,10 @@ checkResults(const VkDevice &device,
 static LogicalResult vulkanCreateMemoryBuffers(
     const VkDevice &device,
     std::unordered_map<Descriptor, VulkanBufferContent> &vars,
-    uint32_t &memoryTypeIndex, uint32_t &queueFamilyIndex,
+    const VulkanMemoryContext &memoryContext,
     std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers) {
   for (auto &var : vars) {
-    auto memoryBuffer =
-        createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
+    auto memoryBuffer = createMemoryBuffer(device, var, memoryContext);
     memoryBuffers.push_back(memoryBuffer);
   }
   return success();
@@ -576,6 +552,22 @@ static void initDescriptorSetLayoutBindings(
   }
 }
 
+static LogicalResult initMemoryContext(
+    const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+    VulkanMemoryContext &memoryContext) {
+  memoryContext.memorySize = 0;
+  for (auto var : vars) {
+    if (var.second.size) {
+      memoryContext.memorySize += var.second.size;
+    } else {
+      return failure();
+    }
+  }
+  memoryContext.queueFamilyIndex = 0;
+  memoryContext.memoryTypeIndex = VK_MAX_MEMORY_TYPES;
+  return success();
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -587,21 +579,17 @@ processModule(spirv::ModuleOp module,
     }
   }
   */
-  VkDeviceSize memorySize;
-  getMemorySize(vars, memorySize);
-
-  uint32_t memoryTypeIndex, queueFamilyIndex;
+  VulkanMemoryContext memoryContext;
+  initMemoryContext(vars, memoryContext);
 
   VkInstance instance;
   vulkanCreateInstance(instance);
 
   VkDevice device;
-  vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex, memorySize,
-                     device);
+  vulkanCreateDevice(instance, memoryContext, device);
 
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
-  vulkanCreateMemoryBuffers(device, vars, memoryTypeIndex, queueFamilyIndex,
-                            memoryBuffers);
+  vulkanCreateMemoryBuffers(device, vars, memoryContext, memoryBuffers);
 
   VkShaderModule shaderModule;
   createShaderModule(device, shaderModule);
@@ -620,8 +608,9 @@ processModule(spirv::ModuleOp module,
 
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   VkDescriptorPool descriptorPool;
-  vulkanCreateDescriptorPool(device, queueFamilyIndex, memoryBuffers.size(),
-                             commandPoolCreateInfo, descriptorPool);
+  vulkanCreateDescriptorPool(device, memoryContext.queueFamilyIndex,
+                             memoryBuffers.size(), commandPoolCreateInfo,
+                             descriptorPool);
 
   VkDescriptorSet descriptorSet;
   vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool,
@@ -635,7 +624,8 @@ processModule(spirv::ModuleOp module,
                                        descriptorSet, pipeline, pipelineLayout,
                                        commandBuffer);
 
-  vulkanSubmitDeviceQueue(device, commandBuffer, queueFamilyIndex);
+  vulkanSubmitDeviceQueue(device, commandBuffer,
+                          memoryContext.queueFamilyIndex);
 
   // TODO: Fix this.
   checkResults(device, memoryBuffers, vars);
