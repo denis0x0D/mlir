@@ -475,6 +475,43 @@ vulkanAllocateDescriptorSets(const VkDevice &device,
   return descriptorSet;
 }
 
+static VkCommandBuffer vulkanCreateCommandBufferAndDispatchComputeKernel(
+    const VkDevice &device,
+    const VkCommandPoolCreateInfo &commandPoolCreateInfo,
+    const VkDescriptorSet &descriptorSet, const VkPipeline &pipeline,
+    const VkPipelineLayout &pipelineLayout) {
+  VkCommandPool commandPool;
+  BAIL_ON_BAD_RESULT(
+      vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
+  VkCommandBufferAllocateInfo commandBufferAllocateInfo;
+  commandBufferAllocateInfo.sType =
+      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  commandBufferAllocateInfo.pNext = nullptr;
+  commandBufferAllocateInfo.commandPool = commandPool;
+  commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  commandBufferAllocateInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(
+      device, &commandBufferAllocateInfo, &commandBuffer));
+
+  VkCommandBufferBeginInfo commandBufferBeginInfo;
+  commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  commandBufferBeginInfo.pNext = nullptr;
+  commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  commandBufferBeginInfo.pInheritanceInfo = 0;
+
+  BAIL_ON_BAD_RESULT(
+      vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+  // Local global pool size.
+  vkCmdDispatch(commandBuffer, 1, 1, 1);
+  BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+  return commandBuffer;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -525,39 +562,10 @@ processModule(spirv::ModuleOp module,
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
-  // TODO: Move to function.
-  // Command pool.
-  VkCommandPool commandPool;
-  BAIL_ON_BAD_RESULT(
-      vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
 
-  VkCommandBufferAllocateInfo commandBufferAllocateInfo;
-  commandBufferAllocateInfo.sType =
-      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  commandBufferAllocateInfo.pNext = nullptr;
-  commandBufferAllocateInfo.commandPool = commandPool;
-  commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  commandBufferAllocateInfo.commandBufferCount = 1;
+  auto commandBuffer = vulkanCreateCommandBufferAndDispatchComputeKernel(
+      device, commandPoolCreateInfo, descriptorSet, pipeline, pipelineLayout);
 
-  VkCommandBuffer commandBuffer;
-  BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(
-      device, &commandBufferAllocateInfo, &commandBuffer));
-
-  VkCommandBufferBeginInfo commandBufferBeginInfo;
-  commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  commandBufferBeginInfo.pNext = nullptr;
-  commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  commandBufferBeginInfo.pInheritanceInfo = 0;
-
-  BAIL_ON_BAD_RESULT(
-      vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          pipelineLayout, 0, 1, &descriptorSet, 0, 0);
-  vkCmdDispatch(commandBuffer, 1, 1, 1);
-  BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
-
-  // TODO: Move to the function.
   VkQueue queue;
   vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
   VkSubmitInfo submitInfo;
