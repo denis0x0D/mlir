@@ -475,7 +475,7 @@ vulkanAllocateDescriptorSets(const VkDevice &device,
   return descriptorSet;
 }
 
-static VkCommandBuffer vulkanCreateCommandBufferAndDispatchComputeKernel(
+static VkCommandBuffer vulkanCreateAndDispatchCommandBuffer(
     const VkDevice &device,
     const VkCommandPoolCreateInfo &commandPoolCreateInfo,
     const VkDescriptorSet &descriptorSet, const VkPipeline &pipeline,
@@ -510,6 +510,26 @@ static VkCommandBuffer vulkanCreateCommandBufferAndDispatchComputeKernel(
   vkCmdDispatch(commandBuffer, 1, 1, 1);
   BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
   return commandBuffer;
+}
+
+static LogicalResult
+vulkanSubmitDeviceQueue(const VkDevice &device,
+                        const VkCommandBuffer &commandBuffer,
+                        uint32_t queueFamilyIndex) {
+  VkQueue queue;
+  vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
+  VkSubmitInfo submitInfo;
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.pNext = nullptr;
+  submitInfo.waitSemaphoreCount = 0;
+  submitInfo.pWaitSemaphores = 0;
+  submitInfo.pWaitDstStageMask = 0;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+  submitInfo.signalSemaphoreCount = 0;
+  submitInfo.pSignalSemaphores = nullptr;
+  BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
+  BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
 }
 
 static LogicalResult
@@ -563,24 +583,10 @@ processModule(spirv::ModuleOp module,
                                                     descriptorSet);
   }
 
-  auto commandBuffer = vulkanCreateCommandBufferAndDispatchComputeKernel(
+  auto commandBuffer = vulkanCreateAndDispatchCommandBuffer(
       device, commandPoolCreateInfo, descriptorSet, pipeline, pipelineLayout);
 
-  VkQueue queue;
-  vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
-  VkSubmitInfo submitInfo;
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submitInfo.pNext = nullptr;
-  submitInfo.waitSemaphoreCount = 0;
-  submitInfo.pWaitSemaphores = 0;
-  submitInfo.pWaitDstStageMask = 0;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffer;
-  submitInfo.signalSemaphoreCount = 0;
-  submitInfo.pSignalSemaphores = nullptr;
-
-  BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
-  BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+  vulkanSubmitDeviceQueue(device, commandBuffer);
 
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
