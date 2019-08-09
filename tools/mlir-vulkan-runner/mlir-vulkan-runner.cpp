@@ -250,12 +250,12 @@ static void createDescriptorBufferInfoAndUpdateDesriptorSet(
   vkUpdateDescriptorSets(device, 1, &wSet, 0, nullptr);
 }
 
-static VkDevice vulkanCreateDevice(const VkInstance &instance,
-                                   uint32_t &memoryTypeIndex,
-                                   uint32_t &queueFamilyIndex,
-                                   const VkDeviceSize memorySize) {
+static LogicalResult vulkanCreateDevice(const VkInstance &instance,
+                                        uint32_t &memoryTypeIndex,
+                                        uint32_t &queueFamilyIndex,
+                                        const VkDeviceSize memorySize,
+                                        VkDevice &device) {
   uint32_t physicalDeviceCount = 0;
-  VkDevice device;
   BAIL_ON_BAD_RESULT(
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
   std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
@@ -315,7 +315,7 @@ static VkDevice vulkanCreateDevice(const VkInstance &instance,
                            ? VK_ERROR_OUT_OF_HOST_MEMORY
                            : VK_SUCCESS);
   }
-  return device;
+  return success();
 }
 
 static void Print(int32_t *result, int size) {
@@ -338,7 +338,8 @@ createDescriptorSetLayoutBinding(Descriptor descriptor) {
   return descriptorSetLayoutBindings;
 }
 
-static VkShaderModule createShaderModule(const VkDevice &device) {
+static LogicalResult createShaderModule(const VkDevice &device,
+                                        VkShaderModule &shaderModule) {
   size_t size = 0;
   SmallVector<uint32_t, 0> binary;
   uint32_t *shader =
@@ -361,11 +362,9 @@ static VkShaderModule createShaderModule(const VkDevice &device) {
   shaderModuleCreateInfo.flags = 0;
   shaderModuleCreateInfo.codeSize = codeSize;
   shaderModuleCreateInfo.pCode = shader;
-  VkShaderModule shader_module;
   BAIL_ON_BAD_RESULT(
-      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shader_module));
-  // TODO: return LogicalResult.
-  return shader_module;
+      vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule));
+  return success();
 }
 
 static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
@@ -561,13 +560,16 @@ processModule(spirv::ModuleOp module,
   uint32_t memoryTypeIndex, queueFamilyIndex;
   auto instance = vulkanCreateInstance();
   const VkDeviceSize memorySize = getMemorySize(vars);
+
   if (!memorySize) {
     // TODO: Update for better formating.
     return failure();
   }
+
   // TODO: return type is LogicalResult
-  auto device = vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex,
-                                   memorySize);
+  VkDevice device;
+  vulkanCreateDevice(instance, memoryTypeIndex, queueFamilyIndex, memorySize,
+                     device);
   // TODO: Refactor to single function.
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
   for (auto &var : vars) {
@@ -575,7 +577,9 @@ processModule(spirv::ModuleOp module,
         createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
     memoryBuffers.push_back(memoryBuffer);
   }
-  auto shader_module = createShaderModule(device);
+
+  VkShaderModule shaderModule;
+  createShaderModule(device, shaderModule);
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   for (auto var : vars) {
     descriptorSetLayoutBindings.push_back(
@@ -584,7 +588,7 @@ processModule(spirv::ModuleOp module,
   auto descriptorSetLayout =
       vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings);
   auto pipelineLayout = vulkanCreatePipelineLayout(device, descriptorSetLayout);
-  auto pipeline = vulkanCreatePipeline(device, pipelineLayout, shader_module);
+  auto pipeline = vulkanCreatePipeline(device, pipelineLayout, shaderModule);
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   auto descriptorPool = vulkanCreateDescriptorPool(
       device, queueFamilyIndex, memoryBuffers.size(), commandPoolCreateInfo);
