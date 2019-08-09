@@ -114,18 +114,18 @@ static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
 struct VulkanDeviceMemoryBuffer {
   VkBuffer buffer;
   VkDeviceMemory deviceMemory;
-  int descriptor;
+  int32_t descriptor{0};
 };
 
 struct VulkanBufferContent {
-  void *ptr;
-  int64_t size;
+  void *ptr{nullptr};
+  int64_t size{0};
 };
 
 struct VulkanMemoryContext {
-  uint32_t queueFamilyIndex;
-  uint32_t memoryTypeIndex;
-  VkDeviceSize memorySize;
+  uint32_t queueFamilyIndex{0};
+  uint32_t memoryTypeIndex{VK_MAX_MEMORY_TYPES};
+  VkDeviceSize memorySize{0};
 };
 
 static LogicalResult
@@ -584,9 +584,9 @@ static void initDescriptorSetLayoutBindings(
   }
 }
 
-static LogicalResult initMemoryContext(
-    const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
-    VulkanMemoryContext &memoryContext) {
+static LogicalResult
+countMemorySize(const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+                VulkanMemoryContext &memoryContext) {
   memoryContext.memorySize = 0;
   for (auto var : vars) {
     if (var.second.size) {
@@ -595,8 +595,6 @@ static LogicalResult initMemoryContext(
       return failure();
     }
   }
-  memoryContext.queueFamilyIndex = 0;
-  memoryContext.memoryTypeIndex = VK_MAX_MEMORY_TYPES;
   return success();
 }
 
@@ -613,7 +611,7 @@ processModule(spirv::ModuleOp module,
   */
 
   VulkanMemoryContext memoryContext;
-  initMemoryContext(vars, memoryContext);
+  countMemorySize(vars, memoryContext);
 
   VkInstance instance;
   vulkanCreateInstance(instance);
@@ -698,7 +696,10 @@ PopulateData(std::unordered_map<Descriptor, VulkanBufferContent> &vars,
     for (int j = 0; j < 4; ++j) {
       ptr[j] = j;
     }
-    vars.insert({i, {ptr, sizeof(int) * 4}});
+    VulkanBufferContent content;
+    content.ptr = ptr;
+    content.size = sizeof(int) * 4;
+    vars.insert({i, content});
   }
 }
 
