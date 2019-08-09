@@ -599,17 +599,25 @@ countMemorySize(const llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
 }
 
 static LogicalResult
-processModule(spirv::ModuleOp module,
-              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
-  /*
+processVariables(spirv::ModuleOp module,
+                 llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
   // TODO: deduce needed info from vars.
+  // Verify that the amount of global vars is the same.
   for (auto &op : module.getBlock()) {
     if (isa<spirv::VariableOp>(op)) {
       processVariable(dyn_cast<spirv::VariableOp>(op));
     }
   }
-  */
+  return success();
+}
 
+static LogicalResult
+processModule(spirv::ModuleOp module,
+              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
+  if (failed(processVariables(module, vars))) {
+    // TODO: emit error.
+    return failure();
+  }
   VulkanMemoryContext memoryContext;
   if (failed(countMemorySize(vars, memoryContext))) {
     return failure();
