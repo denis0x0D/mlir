@@ -226,26 +226,30 @@ createMemoryBuffer(const VkDevice &device,
   return memoryBuffer;
 }
 
-static void createDescriptorBufferInfoAndUpdateDesriptorSet(
-    const VkDevice &device, VulkanDeviceMemoryBuffer &memoryBuffer,
+static void createDescriptorBufferInfoAndUpdateDesriptorSets(
+    const VkDevice &device,
+    std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
     VkDescriptorSet &descriptorSet) {
-  VkDescriptorBufferInfo descriptorBufferInfo;
-  descriptorBufferInfo.buffer = memoryBuffer.buffer;
-  descriptorBufferInfo.offset = 0;
-  descriptorBufferInfo.range = VK_WHOLE_SIZE;
 
-  VkWriteDescriptorSet wSet;
-  wSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  wSet.pNext = nullptr;
-  wSet.dstSet = descriptorSet;
-  wSet.dstBinding = memoryBuffer.descriptor;
-  wSet.dstArrayElement = 0;
-  wSet.descriptorCount = 1;
-  wSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  wSet.pImageInfo = nullptr;
-  wSet.pBufferInfo = &descriptorBufferInfo;
-  wSet.pTexelBufferView = nullptr;
-  vkUpdateDescriptorSets(device, 1, &wSet, 0, nullptr);
+  for (auto memoryBuffer : memoryBuffers) {
+    VkDescriptorBufferInfo descriptorBufferInfo;
+    descriptorBufferInfo.buffer = memoryBuffer.buffer;
+    descriptorBufferInfo.offset = 0;
+    descriptorBufferInfo.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet wSet;
+    wSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wSet.pNext = nullptr;
+    wSet.dstSet = descriptorSet;
+    wSet.dstBinding = memoryBuffer.descriptor;
+    wSet.dstArrayElement = 0;
+    wSet.descriptorCount = 1;
+    wSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    wSet.pImageInfo = nullptr;
+    wSet.pBufferInfo = &descriptorBufferInfo;
+    wSet.pTexelBufferView = nullptr;
+    vkUpdateDescriptorSets(device, 1, &wSet, 0, nullptr);
+  }
 }
 
 static LogicalResult vulkanCreateDevice(const VkInstance &instance,
@@ -624,12 +628,9 @@ processModule(spirv::ModuleOp module,
   VkDescriptorSet descriptorSet;
   vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool,
                                descriptorSet);
-
-  // TODO: Move to function.
-  for (auto memoryBuffer : memoryBuffers) {
-    createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
-                                                    descriptorSet);
-  }
+  
+  createDescriptorBufferInfoAndUpdateDesriptorSets(device, memoryBuffers,
+                                                   descriptorSet);
 
   VkCommandBuffer commandBuffer;
   vulkanCreateAndDispatchCommandBuffer(device, commandPoolCreateInfo,
