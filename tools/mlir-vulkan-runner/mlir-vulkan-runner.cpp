@@ -213,8 +213,7 @@ createMemoryBuffer(const VkDevice &device,
   RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                      bufferSize, 0, (void **)&payload),
                          "vkMapMemory");
-  // TODO: eliminate memcpy?
-  memcpy(payload, var.second.ptr, var.second.size);
+  std::memcpy(payload, var.second.ptr, var.second.size);
   vkUnmapMemory(device, memoryBuffer.deviceMemory);
 
   VkBufferCreateInfo bufferCreateInfo;
@@ -275,12 +274,10 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
                                                     physicalDevices.data()),
                          "vkEnumeratePhysicalDevices");
 
-  if (!physicalDeviceCount) {
-    // TOOD: generate an error message.
-    return failure();
-  }
+  RETURN_ON_VULKAN_ERROR(physicalDeviceCount ? VK_SUCCESS : VK_INCOMPLETE,
+                         "physicalDeviceCount");
 
-  // TODO: find the best device.
+  // TODO(denis0x0D): find the best device.
   vkGetBestComputeQueueNPH(physicalDevices[0], memoryContext.queueFamilyIndex);
 
   const float queuePrioritory = 1.0f;
@@ -611,52 +608,67 @@ processModule(spirv::ModuleOp module,
   */
 
   VulkanMemoryContext memoryContext;
-  countMemorySize(vars, memoryContext);
-
+  if (failed(countMemorySize(vars, memoryContext))) {
+    return failure();
+  }
   VkInstance instance;
-  vulkanCreateInstance(instance);
-
+  if (failed(vulkanCreateInstance(instance))) {
+    return failure();
+  }
   VkDevice device;
-  vulkanCreateDevice(instance, memoryContext, device);
-
+  if (failed(vulkanCreateDevice(instance, memoryContext, device))) {
+    return failure();
+  }
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
-  vulkanCreateMemoryBuffers(device, vars, memoryContext, memoryBuffers);
-
+  if (failed(vulkanCreateMemoryBuffers(device, vars, memoryContext,
+                                       memoryBuffers))) {
+    return failure();
+  }
   VkShaderModule shaderModule;
-  createShaderModule(device, shaderModule);
-
+  if (failed(createShaderModule(device, shaderModule))) {
+    return failure();
+  }
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   initDescriptorSetLayoutBindings(memoryBuffers, descriptorSetLayoutBindings);
-
   VkDescriptorSetLayout descriptorSetLayout;
-  vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings,
-                                      descriptorSetLayout);
+  if (failed(vulkanCreateDescriptorSetLayoutInfo(
+          device, descriptorSetLayoutBindings, descriptorSetLayout))) {
+    return failure();
+  }
   VkPipelineLayout pipelineLayout;
-  vulkanCreatePipelineLayout(device, descriptorSetLayout, pipelineLayout);
-
+  if (failed(vulkanCreatePipelineLayout(device, descriptorSetLayout,
+                                        pipelineLayout))) {
+    return failure();
+  }
   VkPipeline pipeline;
-  vulkanCreatePipeline(device, pipelineLayout, shaderModule, pipeline);
-
+  if (failed(vulkanCreatePipeline(device, pipelineLayout, shaderModule,
+                                  pipeline))) {
+    return failure();
+  }
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   VkDescriptorPool descriptorPool;
-  vulkanCreateDescriptorPool(device, memoryContext.queueFamilyIndex,
-                             memoryBuffers.size(), commandPoolCreateInfo,
-                             descriptorPool);
-
+  if (failed(vulkanCreateDescriptorPool(
+          device, memoryContext.queueFamilyIndex, memoryBuffers.size(),
+          commandPoolCreateInfo, descriptorPool))) {
+    return failure();
+  }
   VkDescriptorSet descriptorSet;
-  vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool,
-                               descriptorSet);
-  
+  if (failed(vulkanAllocateDescriptorSets(device, descriptorSetLayout,
+                                          descriptorPool, descriptorSet))) {
+    return failure();
+  }
   createDescriptorBufferInfoAndUpdateDesriptorSets(device, memoryBuffers,
                                                    descriptorSet);
-
   VkCommandBuffer commandBuffer;
-  vulkanCreateAndDispatchCommandBuffer(device, commandPoolCreateInfo,
-                                       descriptorSet, pipeline, pipelineLayout,
-                                       commandBuffer);
-
-  vulkanSubmitDeviceQueue(device, commandBuffer,
-                          memoryContext.queueFamilyIndex);
+  if (failed(vulkanCreateAndDispatchCommandBuffer(
+          device, commandPoolCreateInfo, descriptorSet, pipeline,
+          pipelineLayout, commandBuffer))) {
+    return failure();
+  }
+  if (failed(vulkanSubmitDeviceQueue(device, commandBuffer,
+                                     memoryContext.queueFamilyIndex))) {
+    return failure();
+  }
 
   // TODO: Fix this.
   checkResults(device, memoryBuffers, vars);
