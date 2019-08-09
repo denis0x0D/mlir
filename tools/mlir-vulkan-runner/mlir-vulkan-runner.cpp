@@ -112,15 +112,14 @@ struct VulkanBufferContent {
   int64_t size;
 };
 
-static VkResult vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
-                                         uint32_t *queueFamilyIndex) {
+static LogicalResult
+vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
+                         uint32_t *queueFamilyIndex) {
   uint32_t queueFamilyPropertiesCount = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount, 0);
-
   std::vector<VkQueueFamilyProperties> queueFamilyProperties(
       queueFamilyPropertiesCount);
-
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice,
                                            &queueFamilyPropertiesCount,
                                            queueFamilyProperties.data());
@@ -133,7 +132,7 @@ static VkResult vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
     if (!(VK_QUEUE_GRAPHICS_BIT & maskedFlags) &&
         (VK_QUEUE_COMPUTE_BIT & maskedFlags)) {
       *queueFamilyIndex = i;
-      return VK_SUCCESS;
+      return success();
     }
   }
 
@@ -145,11 +144,10 @@ static VkResult vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
 
     if (VK_QUEUE_COMPUTE_BIT & maskedFlags) {
       *queueFamilyIndex = i;
-      return VK_SUCCESS;
+      return success();
     }
   }
-  // TODO: must other error;
-  return VK_ERROR_INITIALIZATION_FAILED;
+  return failure();
 }
 
 static VkInstance vulkanCreateInstance() {
@@ -262,59 +260,62 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
 
   BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
                                                 physicalDevices.data()));
-  // TODO: return error;
-  if (physicalDeviceCount) {
-    queueFamilyIndex = 0;
-    BAIL_ON_BAD_RESULT(
-        vkGetBestComputeQueueNPH(physicalDevices[0], &queueFamilyIndex));
 
-    const float queuePrioritory = 1.0f;
-    VkDeviceQueueCreateInfo deviceQueueCreateInfo;
-    deviceQueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    deviceQueueCreateInfo.pNext = nullptr;
-    deviceQueueCreateInfo.flags = 0;
-    deviceQueueCreateInfo.queueFamilyIndex = queueFamilyIndex;
-    deviceQueueCreateInfo.queueCount = 1;
-    deviceQueueCreateInfo.pQueuePriorities = &queuePrioritory;
-
-    // Structure specifying parameters of a newly created device
-    VkDeviceCreateInfo deviceCreateInfo;
-    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceCreateInfo.pNext = nullptr;
-    deviceCreateInfo.flags = 0;
-    deviceCreateInfo.queueCreateInfoCount = 1;
-    deviceCreateInfo.pQueueCreateInfos = &deviceQueueCreateInfo;
-    deviceCreateInfo.enabledLayerCount = 0;
-    deviceCreateInfo.ppEnabledLayerNames = nullptr;
-    deviceCreateInfo.enabledExtensionCount = 0;
-    deviceCreateInfo.ppEnabledExtensionNames = nullptr;
-    deviceCreateInfo.pEnabledFeatures = nullptr;
-
-    BAIL_ON_BAD_RESULT(
-        vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
-    VkPhysicalDeviceMemoryProperties properties;
-    // TODO: better way to take device.
-    vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
-    memoryTypeIndex = VK_MAX_MEMORY_TYPES;
-
-    // Find valid memory types.
-    // TODO: Update it be indexing.
-    for (uint32_t k = 0; k < properties.memoryTypeCount; k++) {
-      if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT &
-           properties.memoryTypes[k].propertyFlags) &&
-          (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT &
-           properties.memoryTypes[k].propertyFlags) &&
-          (memorySize <
-           properties.memoryHeaps[properties.memoryTypes[k].heapIndex].size)) {
-        memoryTypeIndex = k;
-        break;
-      }
-    }
-
-    BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES
-                           ? VK_ERROR_OUT_OF_HOST_MEMORY
-                           : VK_SUCCESS);
+  if (!physicalDeviceCount) {
+    // TOOD: generate an error message.
+    return failure();
   }
+
+  queueFamilyIndex = 0;
+  vkGetBestComputeQueueNPH(physicalDevices[0], &queueFamilyIndex);
+
+  const float queuePrioritory = 1.0f;
+  VkDeviceQueueCreateInfo deviceQueueCreateInfo;
+  deviceQueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+  deviceQueueCreateInfo.pNext = nullptr;
+  deviceQueueCreateInfo.flags = 0;
+  deviceQueueCreateInfo.queueFamilyIndex = queueFamilyIndex;
+  deviceQueueCreateInfo.queueCount = 1;
+  deviceQueueCreateInfo.pQueuePriorities = &queuePrioritory;
+
+  // Structure specifying parameters of a newly created device
+  VkDeviceCreateInfo deviceCreateInfo;
+  deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  deviceCreateInfo.pNext = nullptr;
+  deviceCreateInfo.flags = 0;
+  deviceCreateInfo.queueCreateInfoCount = 1;
+  deviceCreateInfo.pQueueCreateInfos = &deviceQueueCreateInfo;
+  deviceCreateInfo.enabledLayerCount = 0;
+  deviceCreateInfo.ppEnabledLayerNames = nullptr;
+  deviceCreateInfo.enabledExtensionCount = 0;
+  deviceCreateInfo.ppEnabledExtensionNames = nullptr;
+  deviceCreateInfo.pEnabledFeatures = nullptr;
+
+  BAIL_ON_BAD_RESULT(
+      vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
+  VkPhysicalDeviceMemoryProperties properties;
+  // TODO: better way to take device.
+  vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &properties);
+  memoryTypeIndex = VK_MAX_MEMORY_TYPES;
+
+  // Find valid memory types.
+  // TODO: Update it be indexing.
+  for (uint32_t k = 0; k < properties.memoryTypeCount; k++) {
+    if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT &
+         properties.memoryTypes[k].propertyFlags) &&
+        (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT &
+         properties.memoryTypes[k].propertyFlags) &&
+        (memorySize <
+         properties.memoryHeaps[properties.memoryTypes[k].heapIndex].size)) {
+      memoryTypeIndex = k;
+      break;
+    }
+  }
+
+  // Chech the memory type index.
+  BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES
+                         ? VK_ERROR_OUT_OF_HOST_MEMORY
+                         : VK_SUCCESS);
   return success();
 }
 
@@ -355,12 +356,11 @@ static LogicalResult createShaderModule(const VkDevice &device,
   }
   */
 
-  uint64_t codeSize = size;
   VkShaderModuleCreateInfo shaderModuleCreateInfo;
   shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   shaderModuleCreateInfo.pNext = nullptr;
   shaderModuleCreateInfo.flags = 0;
-  shaderModuleCreateInfo.codeSize = codeSize;
+  shaderModuleCreateInfo.codeSize = size;
   shaderModuleCreateInfo.pCode = shader;
   BAIL_ON_BAD_RESULT(
       vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule));
@@ -542,6 +542,19 @@ checkResults(const VkDevice &device,
   }
 }
 
+static LogicalResult vulkanCreateMemoryBuffers(
+    const VkDevice &device,
+    std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+    uint32_t &memoryTypeIndex, uint32_t &queueFamilyIndex,
+    std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers) {
+  for (auto &var : vars) {
+    auto memoryBuffer =
+        createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
+    memoryBuffers.push_back(memoryBuffer);
+  }
+  return success();
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -570,15 +583,11 @@ processModule(spirv::ModuleOp module,
 
   // TODO: Refactor to single function.
   std::vector<VulkanDeviceMemoryBuffer> memoryBuffers;
-  for (auto &var : vars) {
-    auto memoryBuffer =
-        createMemoryBuffer(device, var, memoryTypeIndex, queueFamilyIndex);
-    memoryBuffers.push_back(memoryBuffer);
-  }
+  vulkanCreateMemoryBuffers(device, vars, memoryTypeIndex, queueFamilyIndex,
+                            memoryBuffers);
 
   VkShaderModule shaderModule;
   createShaderModule(device, shaderModule);
-
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
   for (auto var : vars) {
     descriptorSetLayoutBindings.push_back(
