@@ -457,6 +457,24 @@ vulkanCreateDescriptorPool(const VkDevice &device, uint32_t queueFamilyIndex,
   return descriptorPool;
 }
 
+static VkDescriptorSet
+vulkanAllocateDescriptorSets(const VkDevice &device,
+                             const VkDescriptorSetLayout &descriptorSetLayout,
+                             const VkDescriptorPool &descriptorPool) {
+  VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
+  descriptorSetAllocateInfo.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  descriptorSetAllocateInfo.pNext = nullptr;
+  descriptorSetAllocateInfo.descriptorPool = descriptorPool;
+  descriptorSetAllocateInfo.descriptorSetCount = 1;
+  descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
+
+  VkDescriptorSet descriptorSet;
+  BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(
+      device, &descriptorSetAllocateInfo, &descriptorSet));
+  return descriptorSet;
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -499,19 +517,10 @@ processModule(spirv::ModuleOp module,
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   auto descriptorPool = vulkanCreateDescriptorPool(
       device, queueFamilyIndex, memoryBuffers.size(), commandPoolCreateInfo);
+  auto descriptorSet =
+      vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool);
+
   // TODO: Move to function.
-  VkDescriptorSetAllocateInfo descriptorSetAllocateInfo;
-  descriptorSetAllocateInfo.sType =
-      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  descriptorSetAllocateInfo.pNext = nullptr;
-  descriptorSetAllocateInfo.descriptorPool = descriptorPool;
-  descriptorSetAllocateInfo.descriptorSetCount = 1;
-  descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
-
-  VkDescriptorSet descriptorSet;
-  BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(
-      device, &descriptorSetAllocateInfo, &descriptorSet));
-
   for (auto memoryBuffer : memoryBuffers) {
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
