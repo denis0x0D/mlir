@@ -85,9 +85,9 @@ static void processVariable(spirv::VariableOp varOp) {
   }
 }
 
-static void Print(int32_t *result, int size) {
+static void Print(float *result, int size) {
   std::cout << "buffer started with size" << size << std::endl;
-  for (int i = 0; i < size; ++i) {
+  for (int i = 0; i < size / sizeof(float); ++i) {
     std::cout << result[i] << " ";
   }
   std::cout << "buffer ended" << std::endl;
@@ -337,7 +337,7 @@ static LogicalResult createShaderModule(const VkDevice &device,
   size_t size = 0;
   SmallVector<uint32_t, 0> binary;
   uint32_t *shader =
-      ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
+      ReadFromFile(&size, "/home/denis/llvm-project/llvm/projects/mlir/"
                           "test/mlir-vulkan-runner/kernel.spv");
   if (!shader) {
     exit(0);
@@ -544,7 +544,7 @@ checkResults(const VkDevice &device,
              llvm::ArrayRef<VulkanDeviceMemoryBuffer> memoryBuffers,
              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
   for (auto memBuf : memoryBuffers) {
-    int32_t *payload;
+    float *payload;
     size_t size = vars[memBuf.descriptor].size;
     RETURN_ON_VULKAN_ERROR(
         vkMapMemory(device, memBuf.deviceMemory, 0, size, 0, (void **)&payload),
@@ -725,13 +725,13 @@ runOnModule(raw_ostream &os, ModuleOp module,
 static void PopulateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
                          int count) {
   for (int i = 0; i < count; ++i) {
-    int *ptr = new int[4];
+    float *ptr = new float[4];
     for (int j = 0; j < 4; ++j) {
-      ptr[j] = j;
+      ptr[j] = 1.001 + j;
     }
     VulkanBufferContent content;
     content.ptr = ptr;
-    content.size = sizeof(int) * 4;
+    content.size = sizeof(float) * 4;
     vars.insert({i, content});
   }
 }
