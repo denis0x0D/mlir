@@ -206,7 +206,7 @@ createMemoryBuffer(const VkDevice &device,
   void *payload;
   BAIL_ON_BAD_RESULT(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
                                  bufferSize, 0, (void **)&payload));
-
+  // TODO: eliminate memcpy?
   memcpy(payload, var.second.ptr, var.second.size);
   vkUnmapMemory(device, memoryBuffer.deviceMemory);
 
@@ -257,7 +257,6 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   BAIL_ON_BAD_RESULT(
       vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
   std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
-
   BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount,
                                                 physicalDevices.data()));
 
@@ -555,6 +554,22 @@ static LogicalResult vulkanCreateMemoryBuffers(
   return success();
 }
 
+static void initDescriptorSetLayoutBindings(
+    const std::vector<VulkanDeviceMemoryBuffer> &memBuffers,
+    std::vector<VkDescriptorSetLayoutBinding> &descriptorSetLayoutBindings) {
+  for (auto memBuffer : memBuffers) {
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBinding;
+    // Actual descriptor.
+    descriptorSetLayoutBinding.binding = memBuffer.descriptor;
+    descriptorSetLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBinding.descriptorCount = 1;
+    descriptorSetLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    descriptorSetLayoutBinding.pImmutableSamplers = 0;
+    descriptorSetLayoutBindings.push_back(descriptorSetLayoutBinding);
+  }
+}
+
 static LogicalResult
 processModule(spirv::ModuleOp module,
               std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
@@ -588,11 +603,9 @@ processModule(spirv::ModuleOp module,
 
   VkShaderModule shaderModule;
   createShaderModule(device, shaderModule);
+
   std::vector<VkDescriptorSetLayoutBinding> descriptorSetLayoutBindings;
-  for (auto var : vars) {
-    descriptorSetLayoutBindings.push_back(
-        createDescriptorSetLayoutBinding(var.first));
-  }
+  initDescriptorSetLayoutBindings(memoryBuffers, descriptorSetLayoutBindings);
 
   VkDescriptorSetLayout descriptorSetLayout;
   vulkanCreateDescriptorSetLayoutInfo(device, descriptorSetLayoutBindings,
@@ -617,6 +630,7 @@ processModule(spirv::ModuleOp module,
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
                                                     descriptorSet);
   }
+
   VkCommandBuffer commandBuffer;
   vulkanCreateAndDispatchCommandBuffer(device, commandPoolCreateInfo,
                                        descriptorSet, pipeline, pipelineLayout,
