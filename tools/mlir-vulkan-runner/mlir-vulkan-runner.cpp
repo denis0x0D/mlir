@@ -541,7 +541,7 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
 static LogicalResult
 checkResults(const VkDevice &device,
              const std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers,
-             std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
+             llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
     size_t size = vars[memBuf.descriptor].size;
@@ -554,7 +554,7 @@ checkResults(const VkDevice &device,
 
 static LogicalResult vulkanCreateMemoryBuffers(
     const VkDevice &device,
-    std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+    llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
     const VulkanMemoryContext &memoryContext,
     std::vector<VulkanDeviceMemoryBuffer> &memoryBuffers) {
   for (auto &var : vars) {
@@ -582,7 +582,7 @@ static void initDescriptorSetLayoutBindings(
 }
 
 static LogicalResult
-countMemorySize(const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
+countMemorySize(const llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
                 VulkanMemoryContext &memoryContext) {
   memoryContext.memorySize = 0;
   for (auto var : vars) {
@@ -597,7 +597,7 @@ countMemorySize(const std::unordered_map<Descriptor, VulkanBufferContent> &vars,
 
 static LogicalResult
 processModule(spirv::ModuleOp module,
-              std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
+              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
   /*
   // TODO: deduce needed info from vars.
   for (auto &op : module.getBlock()) {
@@ -677,7 +677,7 @@ processModule(spirv::ModuleOp module,
 
 static LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
-            std::unordered_map<Descriptor, VulkanBufferContent> &vars) {
+            llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
 
   if (failed(module.verify())) {
     return failure();
@@ -700,9 +700,8 @@ runOnModule(raw_ostream &os, ModuleOp module,
   return success();
 }
 
-static void
-PopulateData(std::unordered_map<Descriptor, VulkanBufferContent> &vars,
-             int count) {
+static void PopulateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
+                         int count) {
   for (int i = 0; i < count; ++i) {
     int *ptr = new int[4];
     for (int j = 0; j < 4; ++j) {
@@ -735,9 +734,8 @@ int main(int argc, char **argv) {
 
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
-  std::unordered_map<Descriptor, VulkanBufferContent> variables;
+  llvm::DenseMap<Descriptor, VulkanBufferContent> variables;
   PopulateData(variables, 3);
-
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
@@ -749,6 +747,5 @@ int main(int argc, char **argv) {
     llvm::errs() << "can't run on module" << '\n';
     return 1;
   }
-
   return 0;
 }
