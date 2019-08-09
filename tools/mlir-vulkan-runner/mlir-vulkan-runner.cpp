@@ -387,7 +387,7 @@ static VkDescriptorSetLayout vulkanCreateDescriptorSetLayoutInfo(
 
 static VkPipelineLayout
 vulkanCreatePipelineLayout(const VkDevice &device,
-                           VkDescriptorSetLayout &descriptorSetLayout) {
+                           const VkDescriptorSetLayout &descriptorSetLayout) {
   VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
   pipelineLayoutCreateInfo.sType =
       VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -404,8 +404,8 @@ vulkanCreatePipelineLayout(const VkDevice &device,
 }
 
 static VkPipeline vulkanCreatePipeline(const VkDevice &device,
-                                       VkPipelineLayout &pipelineLayout,
-                                       VkShaderModule &shaderModule) {
+                                       const VkPipelineLayout &pipelineLayout,
+                                       const VkShaderModule &shaderModule) {
   // TODO: actual kernel name
   const char *kernel_name = "compute_kernel";
   VkPipelineShaderStageCreateInfo stageInfo;
@@ -530,6 +530,7 @@ vulkanSubmitDeviceQueue(const VkDevice &device,
   submitInfo.pSignalSemaphores = nullptr;
   BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
   BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+  return failure();
 }
 
 static LogicalResult
@@ -576,7 +577,6 @@ processModule(spirv::ModuleOp module,
       device, queueFamilyIndex, memoryBuffers.size(), commandPoolCreateInfo);
   auto descriptorSet =
       vulkanAllocateDescriptorSets(device, descriptorSetLayout, descriptorPool);
-
   // TODO: Move to function.
   for (auto memoryBuffer : memoryBuffers) {
     createDescriptorBufferInfoAndUpdateDesriptorSet(device, memoryBuffer,
@@ -585,8 +585,7 @@ processModule(spirv::ModuleOp module,
 
   auto commandBuffer = vulkanCreateAndDispatchCommandBuffer(
       device, commandPoolCreateInfo, descriptorSet, pipeline, pipelineLayout);
-
-  vulkanSubmitDeviceQueue(device, commandBuffer);
+  vulkanSubmitDeviceQueue(device, commandBuffer, queueFamilyIndex);
 
   for (auto memBuf : memoryBuffers) {
     int32_t *payload;
