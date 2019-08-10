@@ -32,54 +32,15 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 
+#include "mlir-vulkan-runtime.h"
 #include <cstdint>
 #include <iostream>
 #include <vector>
-#include <vulkan/vulkan.h>
 #include <iostream>
 #include <fstream>
 
 using namespace mlir;
 using namespace llvm;
-using Descriptor = int32_t;
-
-struct VulkanDeviceMemoryBuffer {
-  VkBuffer buffer;
-  VkDeviceMemory deviceMemory;
-  int32_t descriptor{0};
-};
-
-struct VulkanBufferContent {
-  void *ptr{nullptr};
-  int64_t size{0};
-};
-
-struct VulkanMemoryContext {
-  uint32_t queueFamilyIndex{0};
-  uint32_t memoryTypeIndex{VK_MAX_MEMORY_TYPES};
-  VkDeviceSize memorySize{0};
-};
-
-struct VulkanExecutionContext {
-  struct LocalSize {
-    int32_t x{1};
-    int32_t y{1};
-    int32_t z{1};
-  } localSize;
-  std::string entryPoint;
-};
-
-inline void emit_vulkan_error(const llvm::Twine &message, VkResult error) {
-  llvm::errs()
-      << message.concat(" failed with error code ").concat(llvm::Twine{error});
-}
-
-#define RETURN_ON_VULKAN_ERROR(result, msg)                                    \
-  if ((result) != VK_SUCCESS) {                                                \
-    emit_vulkan_error(msg, (result));                                          \
-    return failure();                                                          \
-  }
-
 static cl::opt<std::string>
     inputFilename(cl::Positional, cl::desc("<input file>"), cl::init("-"));
 
@@ -149,7 +110,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (failed(runOnModule(outputFile->os(), moduleRef.get(), bufferContents))) {
+  if (failed(runOnModule(moduleRef.get(), bufferContents))) {
     llvm::errs() << "can't run on module" << '\n';
     return 1;
   }
