@@ -49,6 +49,11 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
+static cl::opt<std::string> spirvShaderFileName("s",
+                                                cl::desc("spirv binary shader"),
+                                                cl::value_desc("shader name"),
+                                                cl::init(""));
+
 static void PrintFloat(float *result, int size) {
   for (int i = 0; i < size / sizeof(float); ++i) {
     std::cout << result[i] << " ";
@@ -76,6 +81,14 @@ checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
   }
 }
 
+static void initShader(llvm::SmallVectorImpl<uint32_t> &data,
+                       std::unique_ptr<llvm::MemoryBuffer> buffer) {
+  const char *ptr = buffer->getBufferStart();
+  for (uint32_t i = 0; i < buffer->getBufferSize(); ++i) {
+    data.push_back(static_cast<uint32_t>(ptr[i]));
+  }
+}
+
 int main(int argc, char **argv) {
   llvm::PrettyStackTraceProgram x(argc, argv);
   llvm::InitLLVM y(argc, argv);
@@ -94,6 +107,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  auto spirvShaderFile = openInputFile(spirvShaderFileName, &errorMessage);
+  SmallVector<uint32_t, 0> shader;
+  if (spirvShaderFile) {
+    initShader(shader, std::move(spirvShaderFile));
+  }
+
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
   llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
@@ -106,10 +125,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (failed(runOnModule(moduleRef.get(), bufferContents))) {
-    llvm::errs() << "can't run on module" << '\n';
-    return 1;
-  }
+  std::cout << "shader size " << shader.size() << std::endl;
+
+  /*
+    if (failed(runOnModule(moduleRef.get(), bufferContents))) {
+      llvm::errs() << "can't run on module" << '\n';
+      return 1;
+    }
+    */
 
   checkResults(bufferContents);
   return 0;
