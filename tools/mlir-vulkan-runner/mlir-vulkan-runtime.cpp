@@ -655,6 +655,15 @@ runOnSpirvModule(spirv::ModuleOp module,
   return success();
 }
 
+LogicalResult runOnShader(llvm::SmallVectorImpl<uint32_t> &binary,
+                          llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
+                          const VulkanExecutionContext &vulkanContext) {
+  if (failed(executeRuntime(binary, data, vulkanContext))) {
+    return failure();
+  }
+  return success();
+}
+
 LogicalResult
 runOnModule(ModuleOp module,
             llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
