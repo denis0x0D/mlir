@@ -55,6 +55,10 @@ struct VulkanExecutionContext {
 };
 
 extern mlir::LogicalResult
+runOnShader(llvm::SmallVectorImpl<uint32_t> &binaryShader,
+            llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
+            const VulkanExecutionContext &);
+extern mlir::LogicalResult
 runOnModule(mlir::ModuleOp, llvm::DenseMap<Descriptor, VulkanBufferContent> &);
 
 #endif // MLIR_VULKAN_RUNTIME_H

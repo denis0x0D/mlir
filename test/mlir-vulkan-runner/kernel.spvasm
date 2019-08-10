@@ -7,7 +7,7 @@
           %1 = OpExtInstImport "GLSL.std.450"
                OpMemoryModel Logical GLSL450
                OpEntryPoint GLCompute %15 "compute_kernel" %gl_GlobalInvocationID
-               OpExecutionMode %15 LocalSize 32 32 1
+               OpExecutionMode %15 LocalSize 1 1 1
                OpDecorate %_runtimearr_int ArrayStride 4
                OpMemberDecorate %_struct_10 0 Offset 0
                OpDecorate %_struct_10 BufferBlock
@@ -35,7 +35,7 @@
          %13 = OpVariable %_ptr_Uniform__struct_10 Uniform
          %14 = OpVariable %_ptr_Uniform__struct_10 Uniform
          %gl_GlobalInvocationID = OpVariable %_ptr_Input_v3int Input
-    %K = OpConstant %int 128 ; Matrix dim
+    %K = OpConstant %int 16 ; Matrix dim
     %int_4 = OpConstant %int 4
 %_ptr_Uniform_int = OpTypePointer Uniform %float
 %_ptr_Input_int = OpTypePointer Input %int

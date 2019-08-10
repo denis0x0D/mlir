@@ -58,6 +58,7 @@ static void PrintFloat(float *result, int size) {
   for (int i = 0; i < size / sizeof(float); ++i) {
     std::cout << result[i] << " ";
   }
+  std::cout << '\n';
 }
 
 static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
@@ -107,32 +108,36 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
+  populateData(bufferContents, 3, 4);
   auto spirvShaderFile = openInputFile(spirvShaderFileName, &errorMessage);
+
+  VulkanExecutionContext vulkanContext;
+  vulkanContext.entryPoint = "compute_kernel";
+
   SmallVector<uint32_t, 0> shader;
   if (spirvShaderFile) {
     initShader(shader, std::move(spirvShaderFile));
+    if (failed(runOnShader(shader, bufferContents, vulkanContext))) {
+      llvm::errs() << "\nfailed on shader" << '\n';
+    }
+    return 0;
   }
 
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
-  llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
-  populateData(bufferContents, 3, 4);
-  
+ 
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
-    llvm::errs() << "can not open the file" << '\n';
+    llvm::errs() << "\ncan not open the file" << '\n';
     return 1;
   }
 
-  std::cout << "shader size " << shader.size() << std::endl;
-
-  /*
-    if (failed(runOnModule(moduleRef.get(), bufferContents))) {
-      llvm::errs() << "can't run on module" << '\n';
-      return 1;
-    }
-    */
+  if (failed(runOnModule(moduleRef.get(), bufferContents))) {
+    llvm::errs() << "\ncan't run on module" << '\n';
+    return 1;
+  }
 
   checkResults(bufferContents);
   return 0;

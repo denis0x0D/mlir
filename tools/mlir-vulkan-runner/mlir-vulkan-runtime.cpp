@@ -34,6 +34,7 @@
 
 #include "mlir-vulkan-runtime.h"
 
+#include <iostream>
 using namespace mlir;
 using namespace llvm;
 
