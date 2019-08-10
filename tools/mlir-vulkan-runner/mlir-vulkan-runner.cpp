@@ -53,6 +53,31 @@
 using namespace mlir;
 using namespace llvm;
 using Descriptor = int32_t;
+struct VulkanDeviceMemoryBuffer {
+  VkBuffer buffer;
+  VkDeviceMemory deviceMemory;
+  int32_t descriptor{0};
+};
+
+struct VulkanBufferContent {
+  void *ptr{nullptr};
+  int64_t size{0};
+};
+
+struct VulkanMemoryContext {
+  uint32_t queueFamilyIndex{0};
+  uint32_t memoryTypeIndex{VK_MAX_MEMORY_TYPES};
+  VkDeviceSize memorySize{0};
+};
+
+struct VulkanExecutionContext {
+  struct LocalSize {
+    int32_t x{1};
+    int32_t y{1};
+    int32_t z{1};
+  } localSize;
+  std::string entryPoint;
+};
 
 inline void emit_vulkan_error(const llvm::Twine &message, VkResult error) {
   llvm::errs()
@@ -72,17 +97,21 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
-static void processVariable(spirv::VariableOp varOp) {
+static LogicalResult processVariable(
+    spirv::VariableOp varOp,
+    llvm::DenseMap<Descriptor, VulkanBufferContent> &bufferContents) {
   auto descriptorSetName =
       convertToSnakeCase(stringifyDecoration(spirv::Decoration::DescriptorSet));
   auto bindingName =
       convertToSnakeCase(stringifyDecoration(spirv::Decoration::Binding));
   auto descriptorSet = varOp.getAttrOfType<IntegerAttr>(descriptorSetName);
   auto binding = varOp.getAttrOfType<IntegerAttr>(bindingName);
+  // TODO: verify it.
   if (descriptorSet && binding) {
     std::cout << "( " << descriptorSet.getInt() << " , " << binding.getInt()
               << " )" << std::endl;
   }
+  return success();
 }
 
 static void Print(float *result, int size) {
@@ -109,23 +138,6 @@ static uint32_t *ReadFromFile(size_t *size_out, const char *filename_to_read) {
   }
   return reinterpret_cast<uint32_t *>(shader);
 }
-
-struct VulkanDeviceMemoryBuffer {
-  VkBuffer buffer;
-  VkDeviceMemory deviceMemory;
-  int32_t descriptor{0};
-};
-
-struct VulkanBufferContent {
-  void *ptr{nullptr};
-  int64_t size{0};
-};
-
-struct VulkanMemoryContext {
-  uint32_t queueFamilyIndex{0};
-  uint32_t memoryTypeIndex{VK_MAX_MEMORY_TYPES};
-  VkDeviceSize memorySize{0};
-};
 
 static LogicalResult
 vkGetBestComputeQueueNPH(const VkPhysicalDevice &physicalDevice,
@@ -188,49 +200,6 @@ static LogicalResult vulkanCreateInstance(VkInstance &instance) {
 
   RETURN_ON_VULKAN_ERROR(vkCreateInstance(&instanceCreateInfo, 0, &instance),
                          "vkCreateInstance");
-  return success();
-}
-
-static LogicalResult
-createMemoryBuffer(const VkDevice &device,
-                   std::pair<Descriptor, VulkanBufferContent> var,
-                   const VulkanMemoryContext &memoryContext,
-                   VulkanDeviceMemoryBuffer &memoryBuffer) {
-  memoryBuffer.descriptor = var.first;
-  // TODO: Check that the size is not 0, because it will fail.
-  const int64_t bufferSize = var.second.size;
-
-  VkMemoryAllocateInfo memoryAllocateInfo;
-  memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  memoryAllocateInfo.pNext = nullptr;
-  memoryAllocateInfo.allocationSize = bufferSize;
-  memoryAllocateInfo.memoryTypeIndex = memoryContext.memoryTypeIndex;
-  // Allocate the device memory.
-  RETURN_ON_VULKAN_ERROR(vkAllocateMemory(device, &memoryAllocateInfo, 0,
-                                          &memoryBuffer.deviceMemory),
-                         "vkAllocateMemory");
-  void *payload;
-  RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
-                                     bufferSize, 0, (void **)&payload),
-                         "vkMapMemory");
-  std::memcpy(payload, var.second.ptr, var.second.size);
-  vkUnmapMemory(device, memoryBuffer.deviceMemory);
-
-  VkBufferCreateInfo bufferCreateInfo;
-  bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  bufferCreateInfo.pNext = nullptr;
-  bufferCreateInfo.flags = 0;
-  bufferCreateInfo.size = bufferSize;
-  bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-  bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  bufferCreateInfo.queueFamilyIndexCount = 1;
-  bufferCreateInfo.pQueueFamilyIndices = &memoryContext.queueFamilyIndex;
-  RETURN_ON_VULKAN_ERROR(
-      vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer),
-      "vkCreateBuffer");
-  RETURN_ON_VULKAN_ERROR(vkBindBufferMemory(device, memoryBuffer.buffer,
-                                            memoryBuffer.deviceMemory, 0),
-                         "vkBindBufferMemory");
   return success();
 }
 
@@ -400,19 +369,17 @@ vulkanCreatePipelineLayout(const VkDevice &device,
   return success();
 }
 
-static LogicalResult
-vulkanCreatePipeline(const VkDevice &device,
-                     const VkPipelineLayout &pipelineLayout,
-                     const VkShaderModule &shaderModule, VkPipeline &pipeline) {
-  // TODO: actual kernel name
-  const char *kernel_name = "compute_kernel";
+static LogicalResult vulkanCreatePipeline(
+    const VkDevice &device, const VkPipelineLayout &pipelineLayout,
+    const VkShaderModule &shaderModule,
+    const VulkanExecutionContext &vulkanContext, VkPipeline &pipeline) {
   VkPipelineShaderStageCreateInfo stageInfo;
   stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   stageInfo.pNext = nullptr;
   stageInfo.flags = 0;
   stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
   stageInfo.module = shaderModule;
-  stageInfo.pName = kernel_name;
+  stageInfo.pName = vulkanContext.entryPoint.c_str();
   stageInfo.pSpecializationInfo = 0;
 
   VkComputePipelineCreateInfo computePipelineCreateInfo;
@@ -480,7 +447,9 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
     const VkDevice &device,
     const VkCommandPoolCreateInfo &commandPoolCreateInfo,
     const VkDescriptorSet &descriptorSet, const VkPipeline &pipeline,
-    const VkPipelineLayout &pipelineLayout, VkCommandBuffer &commandBuffer) {
+    const VkPipelineLayout &pipelineLayout,
+    const VulkanExecutionContext &vulkanContext,
+    VkCommandBuffer &commandBuffer) {
   VkCommandPool commandPool;
   RETURN_ON_VULKAN_ERROR(
       vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool),
@@ -510,8 +479,10 @@ static LogicalResult vulkanCreateAndDispatchCommandBuffer(
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                           pipelineLayout, 0, 1, &descriptorSet, 0, 0);
-  // Local global pool size.
-  vkCmdDispatch(commandBuffer, 1, 1, 1);
+
+  vkCmdDispatch(commandBuffer, vulkanContext.localSize.x,
+                vulkanContext.localSize.y, vulkanContext.localSize.z);
+
   RETURN_ON_VULKAN_ERROR(vkEndCommandBuffer(commandBuffer),
                          "vkEndCommandBuffer");
   return success();
@@ -555,13 +526,48 @@ checkResults(const VkDevice &device,
 
 static LogicalResult vulkanCreateMemoryBuffers(
     const VkDevice &device,
-    llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
+    llvm::DenseMap<Descriptor, VulkanBufferContent> &bufferContents,
     const VulkanMemoryContext &memoryContext,
     llvm::SmallVectorImpl<VulkanDeviceMemoryBuffer> &memoryBuffers) {
-  for (auto &var : vars) {
+
+  for (auto &bufferContent : bufferContents) {
     VulkanDeviceMemoryBuffer memoryBuffer;
-    // TODO: Move to this place.
-    createMemoryBuffer(device, var, memoryContext, memoryBuffer);
+    memoryBuffer.descriptor = bufferContent.first;
+    const int64_t bufferSize = bufferContent.second.size;
+
+    VkMemoryAllocateInfo memoryAllocateInfo;
+    memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memoryAllocateInfo.pNext = nullptr;
+    memoryAllocateInfo.allocationSize = bufferSize;
+    memoryAllocateInfo.memoryTypeIndex = memoryContext.memoryTypeIndex;
+    // Allocate the device memory.
+    RETURN_ON_VULKAN_ERROR(vkAllocateMemory(device, &memoryAllocateInfo, 0,
+                                            &memoryBuffer.deviceMemory),
+                           "vkAllocateMemory");
+    void *payload;
+    RETURN_ON_VULKAN_ERROR(vkMapMemory(device, memoryBuffer.deviceMemory, 0,
+                                       bufferSize, 0, (void **)&payload),
+                           "vkMapMemory");
+    
+    std::memcpy(payload, bufferContent.second.ptr, bufferContent.second.size);
+    vkUnmapMemory(device, memoryBuffer.deviceMemory);
+
+    VkBufferCreateInfo bufferCreateInfo;
+    bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferCreateInfo.pNext = nullptr;
+    bufferCreateInfo.flags = 0;
+    bufferCreateInfo.size = bufferSize;
+    bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferCreateInfo.queueFamilyIndexCount = 1;
+    bufferCreateInfo.pQueueFamilyIndices = &memoryContext.queueFamilyIndex;
+    RETURN_ON_VULKAN_ERROR(
+        vkCreateBuffer(device, &bufferCreateInfo, 0, &memoryBuffer.buffer),
+        "vkCreateBuffer");
+    RETURN_ON_VULKAN_ERROR(vkBindBufferMemory(device, memoryBuffer.buffer,
+                                              memoryBuffer.deviceMemory, 0),
+                           "vkBindBufferMemory");
+
     memoryBuffers.push_back(memoryBuffer);
   }
   return success();
@@ -599,25 +605,38 @@ countMemorySize(const llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
 }
 
 static LogicalResult
-processVariables(spirv::ModuleOp module,
-                 llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
-  // TODO: deduce needed info from vars.
-  // Verify that the amount of global vars is the same.
+processSpirvModule(spirv::ModuleOp module,
+                   llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
+                   VulkanExecutionContext &vulkanContext) {
   for (auto &op : module.getBlock()) {
-    if (isa<spirv::VariableOp>(op)) {
-      processVariable(dyn_cast<spirv::VariableOp>(op));
+    if (isa<spirv::ExecutionModeOp>(op)) {
+      // TODO: Populate LocalSize.
+    } else if (isa<spirv::EntryPointOp>(op)) {
+      // TODO: Populate entry point.
+    } else if (isa<spirv::VariableOp>(op)) {
+      if (failed(processVariable(dyn_cast<spirv::VariableOp>(op), vars))) {
+        return failure();
+      }
     }
+  }
+
+  if (vulkanContext.entryPoint.empty()) {
+    llvm::errs() << "Entry point is not found\n ";
+    return failure();
   }
   return success();
 }
 
 static LogicalResult
-processModule(spirv::ModuleOp module,
-              llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
-  if (failed(processVariables(module, vars))) {
-    // TODO: emit error.
+runOnSpirvModule(spirv::ModuleOp module,
+                 llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
+
+  VulkanExecutionContext vulkanContext;
+  if (failed(processSpirvModule(module, vars, vulkanContext))) {
+    llvm::errs() << "Failed to deduce an information from spv.Module\n";
     return failure();
   }
+
   VulkanMemoryContext memoryContext;
   if (failed(countMemorySize(vars, memoryContext))) {
     return failure();
@@ -633,7 +652,7 @@ processModule(spirv::ModuleOp module,
     return failure();
   }
 
-  llvm::SmallVector<VulkanDeviceMemoryBuffer, 16> memoryBuffers;
+  llvm::SmallVector<VulkanDeviceMemoryBuffer, 0> memoryBuffers;
   if (failed(vulkanCreateMemoryBuffers(device, vars, memoryContext,
                                        memoryBuffers))) {
     return failure();
@@ -644,7 +663,7 @@ processModule(spirv::ModuleOp module,
     return failure();
   }
 
-  llvm::SmallVector<VkDescriptorSetLayoutBinding, 16>
+  llvm::SmallVector<VkDescriptorSetLayoutBinding, 0>
       descriptorSetLayoutBindings;
   initDescriptorSetLayoutBindings(memoryBuffers, descriptorSetLayoutBindings);
   
@@ -662,7 +681,7 @@ processModule(spirv::ModuleOp module,
 
   VkPipeline pipeline;
   if (failed(vulkanCreatePipeline(device, pipelineLayout, shaderModule,
-                                  pipeline))) {
+                                  vulkanContext, pipeline))) {
     return failure();
   }
 
@@ -684,9 +703,10 @@ processModule(spirv::ModuleOp module,
   VkCommandBuffer commandBuffer;
   if (failed(vulkanCreateAndDispatchCommandBuffer(
           device, commandPoolCreateInfo, descriptorSet, pipeline,
-          pipelineLayout, commandBuffer))) {
+          pipelineLayout, vulkanContext, commandBuffer))) {
     return failure();
   }
+
   if (failed(vulkanSubmitDeviceQueue(device, commandBuffer,
                                      memoryContext.queueFamilyIndex))) {
     return failure();
@@ -713,7 +733,7 @@ runOnModule(raw_ostream &os, ModuleOp module,
         spirvModule.emitError("found more than one module");
       }
       done = true;
-      processModule(spirvModule, vars);
+      runOnSpirvModule(spirvModule, vars);
     });
   }
 
@@ -756,8 +776,8 @@ int main(int argc, char **argv) {
 
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
-  llvm::DenseMap<Descriptor, VulkanBufferContent> variables;
-  PopulateData(variables, 3);
+  llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
+  PopulateData(bufferContents, 3);
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
@@ -765,7 +785,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (failed(runOnModule(outputFile->os(), moduleRef.get(), variables))) {
+  if (failed(runOnModule(outputFile->os(), moduleRef.get(), bufferContents))) {
     llvm::errs() << "can't run on module" << '\n';
     return 1;
   }
