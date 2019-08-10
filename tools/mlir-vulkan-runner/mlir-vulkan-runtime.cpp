@@ -32,7 +32,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 
-#include "mlir-vulkan-runitme.h"
+#include "mlir-vulkan-runtime.h"
 
 using namespace mlir;
 using namespace llvm;
@@ -225,14 +225,9 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   return success();
 }
 
-static LogicalResult createShaderModule(const VkDevice &device,
-                                        VkShaderModule &shaderModule) {
-  SmallVector<uint32_t, 0> binary;
-  if (failed(spirv::serialize(module, binary))) {
-    llvm::errs() << "can not serialize module" << '\n';
-    return failure();
-  }
-
+static LogicalResult
+createShaderModule(const VkDevice &device, VkShaderModule &shaderModule,
+                   llvm::SmallVectorImpl<uint32_t> &binary) {
   VkShaderModuleCreateInfo shaderModuleCreateInfo;
   shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   shaderModuleCreateInfo.pNext = nullptr;
@@ -495,7 +490,7 @@ static LogicalResult countMemorySize(
     const llvm::DenseMap<Descriptor, VulkanBufferContent> &bufferContents,
     VulkanMemoryContext &memoryContext) {
   memoryContext.memorySize = 0;
-  for (auto bufferContent : buffersContent) {
+  for (auto bufferContent : bufferContents) {
     if (bufferContent.second.size) {
       memoryContext.memorySize += bufferContent.second.size;
     } else {
@@ -560,6 +555,12 @@ runOnSpirvModule(spirv::ModuleOp module,
     llvm::errs() << "Failed to deduce an information from spv.Module\n";
     return failure();
   }
+  
+  SmallVector<uint32_t, 0> binary;
+  if (failed(spirv::serialize(module, binary))) {
+    llvm::errs() << "can not serialize module" << '\n';
+    return failure();
+  }
 
   VulkanMemoryContext memoryContext;
   if (failed(countMemorySize(vars, memoryContext))) {
@@ -583,7 +584,7 @@ runOnSpirvModule(spirv::ModuleOp module,
   }
 
   VkShaderModule shaderModule;
-  if (failed(createShaderModule(device, shaderModule))) {
+  if (failed(createShaderModule(device, shaderModule, binary))) {
     return failure();
   }
 
@@ -659,8 +660,12 @@ runOnModule(ModuleOp module,
         spirvModule.emitError("found more than one module");
       }
       done = true;
-      runOnSpirvModule(spirvModule, vars);
+      result = runOnSpirvModule(spirvModule, vars);
     });
+  }
+
+  if (failed(result)) {
+    return failure();
   }
 
   return success();

@@ -41,6 +41,7 @@
 
 using namespace mlir;
 using namespace llvm;
+
 static cl::opt<std::string>
     inputFilename(cl::Positional, cl::desc("<input file>"), cl::init("-"));
 
@@ -52,19 +53,17 @@ extern LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
             llvm::DenseMap<Descriptor, VulkanBufferContent> &vars);
 
-static void Print(float *result, int size) {
-  std::cout << "buffer started with size" << size << std::endl;
+static void PrintFloat(float *result, int size) {
   for (int i = 0; i < size / sizeof(float); ++i) {
     std::cout << result[i] << " ";
   }
-  std::cout << "buffer ended" << std::endl;
 }
 
 static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
-                         int count) {
+                         int32_t count, int32_t size) {
   for (int i = 0; i < count; ++i) {
-    float *ptr = new float[4];
-    for (int j = 0; j < 4; ++j) {
+    float *ptr = new float[size];
+    for (int j = 0; j < size; ++j) {
       ptr[j] = 1.001 + j;
     }
     VulkanBufferContent content;
@@ -77,7 +76,7 @@ static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
 static void
 checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
   for (auto temp: data) {
-    Print(((float *)temp.second.ptr), temp.second.size);
+    PrintFloat(((float *)temp.second.ptr), temp.second.size);
   }
 }
 
@@ -102,7 +101,8 @@ int main(int argc, char **argv) {
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
   llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
-  populateData(bufferContents, 3);
+  populateData(bufferContents, 3, 4);
+  
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
