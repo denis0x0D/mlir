@@ -306,7 +306,7 @@ static LogicalResult createShaderModule(const VkDevice &device,
   size_t size = 0;
   SmallVector<uint32_t, 0> binary;
   uint32_t *shader =
-      ReadFromFile(&size, "/home/denis/llvm-project/llvm/projects/mlir/"
+      ReadFromFile(&size, "/home/khalikov/llvm-project/llvm/projects/mlir/"
                           "test/mlir-vulkan-runner/kernel.spv");
   if (!shader) {
     exit(0);
