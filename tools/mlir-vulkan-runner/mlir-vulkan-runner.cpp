@@ -91,8 +91,34 @@ extern LogicalResult
 runOnModule(raw_ostream &os, ModuleOp module,
             llvm::DenseMap<Descriptor, VulkanBufferContent> &vars);
 
-extern void PopulateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
-                         int count);
+static void Print(float *result, int size) {
+  std::cout << "buffer started with size" << size << std::endl;
+  for (int i = 0; i < size / sizeof(float); ++i) {
+    std::cout << result[i] << " ";
+  }
+  std::cout << "buffer ended" << std::endl;
+}
+
+static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
+                         int count) {
+  for (int i = 0; i < count; ++i) {
+    float *ptr = new float[4];
+    for (int j = 0; j < 4; ++j) {
+      ptr[j] = 1.001 + j;
+    }
+    VulkanBufferContent content;
+    content.ptr = ptr;
+    content.size = sizeof(float) * 4;
+    vars.insert({i, content});
+  }
+}
+
+static void
+checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
+  for (auto temp: data) {
+    Print(((float *)temp.second.ptr), temp.second.size);
+  }
+}
 
 int main(int argc, char **argv) {
   llvm::PrettyStackTraceProgram x(argc, argv);
@@ -115,7 +141,7 @@ int main(int argc, char **argv) {
   SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
   llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
-  PopulateData(bufferContents, 3);
+  populateData(bufferContents, 3);
   MLIRContext context;
   OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
   if (!moduleRef) {
@@ -127,5 +153,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "can't run on module" << '\n';
     return 1;
   }
+
+  checkResults(bufferContents);
   return 0;
 }
