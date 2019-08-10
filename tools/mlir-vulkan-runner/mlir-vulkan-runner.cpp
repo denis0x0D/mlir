@@ -613,6 +613,7 @@ processSpirvModule(spirv::ModuleOp module,
       // TODO: Populate LocalSize.
     } else if (isa<spirv::EntryPointOp>(op)) {
       // TODO: Populate entry point.
+      vulkanContext.entryPoint = "compute_kernel";
     } else if (isa<spirv::VariableOp>(op)) {
       if (failed(processVariable(dyn_cast<spirv::VariableOp>(op), vars))) {
         return failure();
