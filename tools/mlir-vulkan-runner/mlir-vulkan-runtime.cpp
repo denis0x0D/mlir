@@ -502,7 +502,7 @@ static LogicalResult countMemorySize(
 
 static LogicalResult
 processSpirvModule(spirv::ModuleOp module,
-                   llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
+                   llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
                    VulkanExecutionContext &vulkanContext) {
   for (auto &op : module.getBlock()) {
     if (isa<spirv::ExecutionModeOp>(op)) {
@@ -511,7 +511,7 @@ processSpirvModule(spirv::ModuleOp module,
       // TODO: Populate entry point.
       vulkanContext.entryPoint = "compute_kernel";
     } else if (isa<spirv::VariableOp>(op)) {
-      if (failed(processVariable(dyn_cast<spirv::VariableOp>(op), vars))) {
+      if (failed(processVariable(dyn_cast<spirv::VariableOp>(op), data))) {
         return failure();
       }
     }
@@ -547,23 +547,12 @@ static LogicalResult fetchBuffersData(
 }
 
 static LogicalResult
-runOnSpirvModule(spirv::ModuleOp module,
-                 llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
-
-  VulkanExecutionContext vulkanContext;
-  if (failed(processSpirvModule(module, vars, vulkanContext))) {
-    llvm::errs() << "Failed to deduce an information from spv.Module\n";
-    return failure();
-  }
-  
-  SmallVector<uint32_t, 0> binary;
-  if (failed(spirv::serialize(module, binary))) {
-    llvm::errs() << "can not serialize module" << '\n';
-    return failure();
-  }
+executeRuntime(llvm::SmallVectorImpl<uint32_t> &binary,
+               llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
+               const VulkanExecutionContext &vulkanContext) {
 
   VulkanMemoryContext memoryContext;
-  if (failed(countMemorySize(vars, memoryContext))) {
+  if (failed(countMemorySize(data, memoryContext))) {
     return failure();
   }
 
@@ -578,7 +567,7 @@ runOnSpirvModule(spirv::ModuleOp module,
   }
 
   llvm::SmallVector<VulkanDeviceMemoryBuffer, 0> memoryBuffers;
-  if (failed(vulkanCreateMemoryBuffers(device, vars, memoryContext,
+  if (failed(vulkanCreateMemoryBuffers(device, data, memoryContext,
                                        memoryBuffers))) {
     return failure();
   }
@@ -637,7 +626,29 @@ runOnSpirvModule(spirv::ModuleOp module,
     return failure();
   }
 
-  if (failed(fetchBuffersData(device, memoryBuffers, vars))) {
+  if (failed(fetchBuffersData(device, memoryBuffers, data))) {
+    return failure();
+  }
+
+  return success();
+}
+
+static LogicalResult
+runOnSpirvModule(spirv::ModuleOp module,
+                 llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
+  VulkanExecutionContext vulkanContext;
+  if (failed(processSpirvModule(module, data, vulkanContext))) {
+    llvm::errs() << "Failed to deduce an information from spv.Module\n";
+    return failure();
+  }
+
+  SmallVector<uint32_t, 0> binary;
+  if (failed(spirv::serialize(module, binary))) {
+    llvm::errs() << "can not serialize module" << '\n';
+    return failure();
+  }
+
+  if (failed(executeRuntime(binary, data, vulkanContext))) {
     return failure();
   }
 
@@ -646,7 +657,7 @@ runOnSpirvModule(spirv::ModuleOp module,
 
 LogicalResult
 runOnModule(ModuleOp module,
-            llvm::DenseMap<Descriptor, VulkanBufferContent> &vars) {
+            llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
 
   if (failed(module.verify())) {
     return failure();
@@ -660,7 +671,7 @@ runOnModule(ModuleOp module,
         spirvModule.emitError("found more than one module");
       }
       done = true;
-      result = runOnSpirvModule(spirvModule, vars);
+      result = runOnSpirvModule(spirvModule, data);
     });
   }
 

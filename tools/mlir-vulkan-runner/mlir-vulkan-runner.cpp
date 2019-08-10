@@ -49,10 +49,6 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
                                            cl::init("-"));
 
-extern LogicalResult
-runOnModule(raw_ostream &os, ModuleOp module,
-            llvm::DenseMap<Descriptor, VulkanBufferContent> &vars);
-
 static void PrintFloat(float *result, int size) {
   for (int i = 0; i < size / sizeof(float); ++i) {
     std::cout << result[i] << " ";
