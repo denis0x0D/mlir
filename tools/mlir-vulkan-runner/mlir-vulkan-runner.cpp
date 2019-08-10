@@ -41,6 +41,7 @@
 
 using namespace mlir;
 using namespace llvm;
+
 using Descriptor = int32_t;
 struct VulkanDeviceMemoryBuffer {
   VkBuffer buffer;
