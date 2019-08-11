@@ -547,10 +547,10 @@ static LogicalResult fetchBuffersData(
   return success();
 }
 
-static LogicalResult
-executeRuntime(llvm::SmallVectorImpl<char> &binary,
-               llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
-               const VulkanExecutionContext &vulkanContext) {
+static LogicalResult dispatchAndRunVulkanShader(
+    llvm::SmallVectorImpl<char> &binary,
+    llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
+    const VulkanExecutionContext &vulkanContext) {
 
   VulkanMemoryContext memoryContext;
   if (failed(countMemorySize(data, memoryContext))) {
@@ -648,11 +648,11 @@ runOnSpirvModule(spirv::ModuleOp module,
     llvm::errs() << "can not serialize module" << '\n';
     return failure();
   }
-/*
-  if (failed(executeRuntime(binary, data, vulkanContext))) {
-    return failure();
-  }
-  */
+
+  // TODO: Enable when shader is valid.
+  // if (failed(executeRuntime(binary, data, vulkanContext))) {
+  // return failure();
+  //}
 
   return success();
 }
@@ -660,7 +660,7 @@ runOnSpirvModule(spirv::ModuleOp module,
 LogicalResult runOnShader(llvm::SmallVectorImpl<char> &binary,
                           llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
                           const VulkanExecutionContext &vulkanContext) {
-  if (failed(executeRuntime(binary, data, vulkanContext))) {
+  if (failed(dispatchAndRunVulkanShader(binary, data, vulkanContext))) {
     return failure();
   }
   return success();
