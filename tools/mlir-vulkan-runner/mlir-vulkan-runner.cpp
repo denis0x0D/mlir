@@ -43,7 +43,7 @@ using namespace mlir;
 using namespace llvm;
 
 static cl::opt<std::string>
-    inputFilename(cl::Positional, cl::desc("<input file>"), cl::init("-"));
+    inputFilename(cl::Positional, cl::desc("<input file>"), cl::init(""));
 
 static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
@@ -54,18 +54,19 @@ static cl::opt<std::string> spirvShaderFileName("s",
                                                 cl::value_desc("shader name"),
                                                 cl::init(""));
 
-static void PrintFloat(float *result, int size) {
-  for (int i = 0; i < size / sizeof(float); ++i) {
-    std::cout << result[i] << " ";
+static void PrintFloat(float *result, uint32_t size, llvm::raw_ostream &os) {
+  for (uint32_t i = 0; i < size / sizeof(float); ++i) {
+    os << result[i] << " ";
   }
-  std::cout << '\n';
+  os << '\n';
 }
 
 static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
-                         int32_t count, int32_t size) {
-  for (int i = 0; i < count; ++i) {
+                         uint32_t count, uint32_t size) {
+  for (uint32_t i = 0; i < count; ++i) {
+    // Frees at the end of the programm.
     float *ptr = new float[size];
-    for (int j = 0; j < size; ++j) {
+    for (uint32_t j = 0; j < size; ++j) {
       ptr[j] = 1.001 + j;
     }
     VulkanBufferContent content;
@@ -75,10 +76,10 @@ static void populateData(llvm::DenseMap<Descriptor, VulkanBufferContent> &vars,
   }
 }
 
-static void
-checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
+static void checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
+                         llvm::raw_ostream &os) {
   for (auto temp: data) {
-    PrintFloat(((float *)temp.second.ptr), temp.second.size);
+    PrintFloat(((float *)temp.second.ptr), temp.second.size, os);
   }
 }
 
@@ -96,49 +97,49 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(argc, argv,
                                     "MLIR Vulkan execution driver\n");
   std::string errorMessage;
-  auto inputFile = openInputFile(inputFilename, &errorMessage);
-  if (!inputFile) {
-    llvm::errs() << errorMessage << "\n";
-    return 1;
-  }
-
   auto outputFile = openOutputFile(outputFilename, &errorMessage);
   if (!outputFile) {
     llvm::errs() << errorMessage << "\n";
     return 1;
   }
 
+  // TODO: It's not right way to populate the data.
   llvm::DenseMap<Descriptor, VulkanBufferContent> bufferContents;
   populateData(bufferContents, 3, 4);
-  auto spirvShaderFile = openInputFile(spirvShaderFileName, &errorMessage);
 
-  VulkanExecutionContext vulkanContext;
-  vulkanContext.entryPoint = "compute_kernel";
-
-  llvm::SmallVector<char, 0> binary;
-  if (spirvShaderFile) {
-    initShader(binary, std::move(spirvShaderFile));
-    if (failed(runOnShader(binary, bufferContents, vulkanContext))) {
-      llvm::errs() << "\nfailed on shader" << '\n';
+  if (!inputFilename.empty()) {
+    auto inputFile = openInputFile(inputFilename, &errorMessage);
+    if (!inputFile) {
+      llvm::errs() << errorMessage << "\n";
+      return 1;
     }
-    checkResults(bufferContents);
-    return 0;
+    SourceMgr sourceMgr;
+    sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
+
+    MLIRContext context;
+    OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
+    if (!moduleRef) {
+      llvm::errs() << "\ncan not open the file" << '\n';
+      return 1;
+    }
+    if (failed(runOnModule(moduleRef.get(), bufferContents))) {
+      llvm::errs() << "\ncan't run on module" << '\n';
+      return 1;
+    }
+  } else if (!spirvShaderFileName.empty()) {
+    auto spirvShaderFile = openInputFile(spirvShaderFileName, &errorMessage);
+    VulkanExecutionContext vulkanContext;
+    vulkanContext.entryPoint = "compute_kernel";
+
+    llvm::SmallVector<char, 0> binary;
+    if (spirvShaderFile) {
+      initShader(binary, std::move(spirvShaderFile));
+      if (failed(runOnShader(binary, bufferContents, vulkanContext))) {
+        llvm::errs() << "\nfailed on shader" << '\n';
+      }
+    }
   }
 
-  SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(inputFile), SMLoc());
- 
-  MLIRContext context;
-  OwningModuleRef moduleRef(parseSourceFile(sourceMgr, &context));
-  if (!moduleRef) {
-    llvm::errs() << "\ncan not open the file" << '\n';
-    return 1;
-  }
-
-  if (failed(runOnModule(moduleRef.get(), bufferContents))) {
-    llvm::errs() << "\ncan't run on module" << '\n';
-    return 1;
-  }
-
+  checkResults(bufferContents, outputFile->os());
   return 0;
 }
