@@ -3,10 +3,7 @@ set(LLVM_OPTIONAL_SOURCES
   mlir-vulkan-runtime.cpp
   )
 
-#TODO: Update it
-#set(MLIR_VULKAN_RUNNTER_ENABLED 1)
-
-#if(MLIR_VULKAN_RUNNER_ENABLED)
+if(MLIR_VULKAN_RUNNER_ENABLED)
 add_llvm_executable(mlir-vulkan-runner
   mlir-vulkan-runner.cpp
 )
@@ -19,6 +16,8 @@ add_llvm_library(mlir-vulkan-runtime SHARED
 
 target_link_libraries(mlir-vulkan-runtime
   MLIRSPIRVSerialization
+  LLVMCore
+  LLVMSupport
   ${VULKAN_LIB}
   )
 
@@ -37,4 +36,4 @@ target_link_libraries(mlir-vulkan-runner PRIVATE
  mlir-vulkan-runtime
  ${VULKAN_LIB}
 )
-#endif()
+endif()
