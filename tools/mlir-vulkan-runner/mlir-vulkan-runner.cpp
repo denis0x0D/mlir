@@ -82,17 +82,11 @@ checkResults(llvm::DenseMap<Descriptor, VulkanBufferContent> &data) {
   }
 }
 
-static void initShader(llvm::SmallVectorImpl<uint32_t> &data,
+static void initShader(llvm::SmallVectorImpl<char> &data,
                        std::unique_ptr<llvm::MemoryBuffer> buffer) {
-
-  std::cout << buffer->getBufferSize() << std::endl;
   const char *ptr = buffer->getBufferStart();
-  for (uint32_t i = 0; i < buffer->getBufferSize(); i += 4) {
-    uint32_t value = 0;
-    for (uint32_t j = 0; j < 4; ++j) {
-      value |= (static_cast<uint32_t>(ptr[i + j]) << (j * 8));
-    }
-    data.push_back(value);
+  for (uint32_t i = 0; i < buffer->getBufferSize(); ++i) {
+    data.push_back(ptr[i]);
   }
 }
 
@@ -121,12 +115,13 @@ int main(int argc, char **argv) {
   VulkanExecutionContext vulkanContext;
   vulkanContext.entryPoint = "compute_kernel";
 
-  llvm::SmallVector<uint32_t, 0> binary;
+  llvm::SmallVector<char, 0> binary;
   if (spirvShaderFile) {
     initShader(binary, std::move(spirvShaderFile));
     if (failed(runOnShader(binary, bufferContents, vulkanContext))) {
       llvm::errs() << "\nfailed on shader" << '\n';
     }
+    checkResults(bufferContents);
     return 0;
   }
 
@@ -145,6 +140,5 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  checkResults(bufferContents);
   return 0;
 }

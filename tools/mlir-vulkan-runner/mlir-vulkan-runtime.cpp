@@ -226,15 +226,15 @@ static LogicalResult vulkanCreateDevice(const VkInstance &instance,
   return success();
 }
 
-static LogicalResult
-createShaderModule(const VkDevice &device, VkShaderModule &shaderModule,
-                   llvm::SmallVectorImpl<uint32_t> &binary) {
+static LogicalResult createShaderModule(const VkDevice &device,
+                                        VkShaderModule &shaderModule,
+                                        llvm::SmallVectorImpl<char> &binary) {
   VkShaderModuleCreateInfo shaderModuleCreateInfo;
   shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   shaderModuleCreateInfo.pNext = nullptr;
   shaderModuleCreateInfo.flags = 0;
-  shaderModuleCreateInfo.codeSize = binary.size() * sizeof(uint32_t);
-  shaderModuleCreateInfo.pCode = binary.data();
+  shaderModuleCreateInfo.codeSize = binary.size();
+  shaderModuleCreateInfo.pCode = reinterpret_cast<uint32_t *>(binary.data());
   RETURN_ON_VULKAN_ERROR(
       vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule),
       "vkCreateShaderModule");
@@ -548,7 +548,7 @@ static LogicalResult fetchBuffersData(
 }
 
 static LogicalResult
-executeRuntime(llvm::SmallVectorImpl<uint32_t> &binary,
+executeRuntime(llvm::SmallVectorImpl<char> &binary,
                llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
                const VulkanExecutionContext &vulkanContext) {
 
@@ -648,15 +648,16 @@ runOnSpirvModule(spirv::ModuleOp module,
     llvm::errs() << "can not serialize module" << '\n';
     return failure();
   }
-
+/*
   if (failed(executeRuntime(binary, data, vulkanContext))) {
     return failure();
   }
+  */
 
   return success();
 }
 
-LogicalResult runOnShader(llvm::SmallVectorImpl<uint32_t> &binary,
+LogicalResult runOnShader(llvm::SmallVectorImpl<char> &binary,
                           llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
                           const VulkanExecutionContext &vulkanContext) {
   if (failed(executeRuntime(binary, data, vulkanContext))) {

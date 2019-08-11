@@ -55,7 +55,7 @@ struct VulkanExecutionContext {
 };
 
 extern mlir::LogicalResult
-runOnShader(llvm::SmallVectorImpl<uint32_t> &binaryShader,
+runOnShader(llvm::SmallVectorImpl<char> &binaryShader,
             llvm::DenseMap<Descriptor, VulkanBufferContent> &data,
             const VulkanExecutionContext &);
 extern mlir::LogicalResult
