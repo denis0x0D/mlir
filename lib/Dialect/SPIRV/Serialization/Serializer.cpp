@@ -132,9 +132,14 @@ private:
   LogicalResult processDecoration(Location loc, uint32_t resultID,
                                   NamedAttribute attr);
 
+  // Process decoration for the specific type, the spec specifies that
+  // decoration might have more than one extra operand, in this case the
+  // last argument  of the function must be used to pass extra operands if
+  // needed.
   template <typename DType>
-  LogicalResult processTypeDecoration(Location loc, DType type,
-                                      uint32_t resultId) {
+  LogicalResult
+  processTypeDecoration(Location loc, DType type,
+                        SmallVectorImpl<uint32_t> &typeDecorationArgs) {
     return emitError(loc, "unhandled decoraion for type:") << type;
   }
 
@@ -375,14 +380,34 @@ LogicalResult Serializer::processDecoration(Location loc, uint32_t resultID,
 namespace {
 template <>
 LogicalResult Serializer::processTypeDecoration<spirv::ArrayType>(
-    Location loc, spirv::ArrayType type, uint32_t resultID) {
-  if (type.hasLayout()) {
+    Location loc, spirv::ArrayType type,
+    SmallVectorImpl<uint32_t> &typeDecorationArgs) {
+  if (type.hasLayout() && typeDecorationArgs.size() == 1) {
     // OpDecorate %arrayTypeSSA ArrayStride strideLiteral
     SmallVector<uint32_t, 3> args;
-    args.push_back(resultID);
+    // Result id
+    args.push_back(typeDecorationArgs[0]);
     args.push_back(static_cast<uint32_t>(spirv::Decoration::ArrayStride));
     args.push_back(type.getArrayStride());
     return encodeInstructionInto(decorations, spirv::Opcode::OpDecorate, args);
+  }
+  return success();
+}
+
+template <>
+LogicalResult Serializer::processTypeDecoration<spirv::StructType>(
+    Location loc, spirv::StructType type,
+    SmallVectorImpl<uint32_t> &typeDecorationArgs) {
+  if (type.hasLayout() && typeDecorationArgs.size() == 2) {
+    SmallVector<uint32_t, 4> args;
+    // Result id
+    args.push_back(typeDecorationArgs[0]);
+    // The number of the member to decorate
+    args.push_back(typeDecorationArgs[1]);
+    args.push_back(static_cast<uint32_t>(spirv::Decoration::Offset));
+    args.push_back(type.getOffset(typeDecorationArgs[1]));
+    return encodeInstructionInto(decorations, spirv::Opcode::OpMemberDecorate,
+                                 args);
   }
   return success();
 }
@@ -525,7 +550,9 @@ Serializer::prepareBasicType(Location loc, Type type, uint32_t resultID,
             /*isSpec=*/false)) {
       operands.push_back(elementCountID);
     }
-    return processTypeDecoration(loc, arrayType, resultID);
+    SmallVector<uint32_t, 1> typeDecorationArgs;
+    typeDecorationArgs.push_back(resultID);
+    return processTypeDecoration(loc, arrayType, typeDecorationArgs);
   }
 
   if (auto ptrType = type.dyn_cast<spirv::PointerType>()) {
@@ -536,6 +563,30 @@ Serializer::prepareBasicType(Location loc, Type type, uint32_t resultID,
     typeEnum = spirv::Opcode::OpTypePointer;
     operands.push_back(static_cast<uint32_t>(ptrType.getStorageClass()));
     operands.push_back(pointeeTypeID);
+    return success();
+  }
+
+  if (auto structType = type.dyn_cast<spirv::StructType>()) {
+    SmallVector<uint32_t, 2> typeDecorationArgs;
+    // Result id
+    typeDecorationArgs.push_back(resultID);
+    // The number of the specific member to decorate, initialization with zero
+    typeDecorationArgs.push_back(0);
+    for (uint32_t elementNum = 0; elementNum < structType.getNumElements();
+         ++elementNum) {
+      uint32_t elementTypeID = 0;
+      if (failed(processType(loc, structType.getElementType(elementNum),
+                             elementTypeID))) {
+        return failure();
+      }
+      operands.push_back(elementTypeID);
+      // Update arguments regarding to the specific member
+      typeDecorationArgs[1] = elementNum;
+      if (failed(processTypeDecoration(loc, structType, typeDecorationArgs))) {
+        return failure();
+      }
+    }
+    typeEnum = spirv::Opcode::OpTypeStruct;
     return success();
   }
 
