@@ -163,6 +163,13 @@ private:
 
   bool isVoidType(Type type) const { return type.isa<NoneType>(); }
 
+  bool isStorageBuffer(Type type) const {
+    if (auto ptrType = type.dyn_cast<spirv::PointerType>()) {
+      return ptrType.getPointeeType().isa<spirv::StructType>();
+    }
+    return false;
+  }
+
   /// Main dispatch method for serializing a type. The result <id> of the
   /// serialized type will be returned as `typeID`.
   LogicalResult processType(Location loc, Type type, uint32_t &typeID);
@@ -417,6 +424,14 @@ LogicalResult Serializer::processTypeDecoration<spirv::ArrayType>(
   return success();
 }
 
+template <>
+LogicalResult Serializer::processTypeDecoration<spirv::StructType>(
+    Location loc, spirv::StructType structType, uint32_t resultID) {
+  SmallVector<uint32_t, 2> args = {
+      resultID, static_cast<uint32_t>(spirv::Decoration::Block)};
+  return encodeInstructionInto(decorations, spirv::Opcode::OpDecorate, args);
+}
+
 LogicalResult
 Serializer::processMemberDecoration(uint32_t structID, uint32_t memberNum,
                                     spirv::Decoration decorationType,
@@ -500,6 +515,15 @@ Serializer::processGlobalVariableOp(spirv::GlobalVariableOp varOp) {
   if (failed(processType(varOp.getLoc(), varOp.type(), resultTypeID))) {
     return failure();
   }
+
+  if (isStorageBuffer(varOp.type())) {
+    if (failed(processTypeDecoration(varOp.getLoc(),
+                                     varOp.type().dyn_cast<spirv::StructType>(),
+                                     resultTypeID))) {
+      return failure();
+    }
+  }
+
   elidedAttrs.push_back("type");
   SmallVector<uint32_t, 4> operands;
   operands.push_back(resultTypeID);
