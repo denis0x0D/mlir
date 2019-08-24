@@ -30,7 +30,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/ADT/SmallVector.h"
 #include "gmock/gmock.h"
-
+#include <fstream>
 #include <string>
 using namespace mlir;
 
@@ -133,6 +133,20 @@ protected:
 //===----------------------------------------------------------------------===//
 // StorageBuffer decoration
 //===----------------------------------------------------------------------===//
+static void Dump(llvm::SmallVectorImpl<uint32_t> &binary) {
+  std::ofstream file;
+  file.open("/home/khalikov/llvm-project/llvm/projects/mlir/temp.spv",
+            std::ios::binary);
+  auto ptr = reinterpret_cast<unsigned char *>(binary.data());
+  if (file.is_open()) {
+    for (uint32_t i = 0, e = binary.size() * 4; i < e; ++i) {
+      file << (ptr)[i];
+    }
+    file.close();
+  } else {
+    std::cout << "can not open " << std::endl;
+  }
+}
 
 TEST_F(SerializationTest, BlockDecorationTest) {
   auto opBuilder = initOpBuilder();
@@ -159,6 +173,7 @@ TEST_F(SerializationTest, BlockDecorationTest) {
   // Serialize module.
   ASSERT_FALSE(failed(spirv::serialize(module, binary)));
   ASSERT_TRUE(processModule());
+  Dump(binary);
   // Top-level struct with storage class Uniform, StorageBuffer: var0, var1.
   ASSERT_EQ(decorationMap[spirv::Decoration::Block], static_cast<uint32_t>(2));
   // Total amount of globals.
