@@ -478,6 +478,14 @@ LogicalResult Serializer::processTypeDecoration<spirv::ArrayType>(
   return success();
 }
 
+template <>
+LogicalResult Serializer::processTypeDecoration<spirv::StructType>(
+    Location loc, spirv::StructType structType, uint32_t resultID) {
+  SmallVector<uint32_t, 2> args(
+      {resultID, static_cast<uint32_t>(spirv::Decoration::Block)});
+  return encodeInstructionInto(decorations, spirv::Opcode::OpDecorate, args);
+}
+
 LogicalResult
 Serializer::processMemberDecoration(uint32_t structID, uint32_t memberIndex,
                                     spirv::Decoration decorationType,
@@ -558,6 +566,22 @@ Serializer::processGlobalVariableOp(spirv::GlobalVariableOp varOp) {
   if (failed(processType(varOp.getLoc(), varOp.type(), resultTypeID))) {
     return failure();
   }
+
+  // Decorate top-level spv.struct.
+  if (auto ptrType = varOp.type().dyn_cast<spirv::PointerType>()) {
+    auto storageClass = ptrType.getStorageClass();
+    if (storageClass == spirv::StorageClass::Uniform ||
+        storageClass == spirv::StorageClass::StorageBuffer) {
+      if (auto structType =
+              ptrType.getPointeeType().dyn_cast<spirv::StructType>()) {
+        if (failed(processTypeDecoration(varOp.getLoc(), structType,
+                                         resultTypeID))) {
+          return emitError(varOp.getLoc(), "cannot decorate ") << structType;
+        }
+      }
+    }
+  }
+
   elidedAttrs.push_back("type");
   SmallVector<uint32_t, 4> operands;
   operands.push_back(resultTypeID);
