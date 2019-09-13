@@ -56,6 +56,17 @@ static LogicalResult encodeInstructionInto(SmallVectorImpl<uint32_t> &binary,
   return success();
 }
 
+/// Update a word.
+static LogicalResult updateWord(SmallVectorImpl<uint32_t> &binary,
+                                uint32_t start, uint32_t offset,
+                                uint32_t word) {
+  if (binary.size() <= start + offset) {
+    return failure();
+  }
+  binary[start + offset] = word;
+  return success();
+}
+
 /// Encodes an SPIR-V `literal` string into the given `binary` vector.
 static LogicalResult encodeStringLiteralInto(SmallVectorImpl<uint32_t> &binary,
                                              StringRef literal) {
@@ -144,6 +155,9 @@ private:
   /// Emit OpName for the given `resultID`.
   LogicalResult processName(uint32_t resultID, StringRef name);
 
+  /// Processes a SPIR-V function call op.
+  LogicalResult processFunctionCallOp(spirv::FunctionCallOp op);
+
   /// Processes a SPIR-V function op.
   LogicalResult processFuncOp(FuncOp op);
 
@@ -164,6 +178,8 @@ private:
   LogicalResult processMemberDecoration(uint32_t structID, uint32_t memberNum,
                                         spirv::Decoration decorationType,
                                         uint32_t value);
+
+  LogicalResult updateForwardReferences();
 
   //===--------------------------------------------------------------------===//
   // Types
@@ -341,6 +357,9 @@ private:
 
   /// Map from results of normal operations to their <id>s.
   DenseMap<Value *, uint32_t> valueIDMap;
+
+  /// Map from function name to start index of OpFunctionCall in binary.
+  SmallVector<std::pair<StringRef, uint32_t>, 4> forwardReferences;
 };
 } // namespace
 
@@ -362,6 +381,10 @@ LogicalResult Serializer::serialize() {
     if (failed(processOperation(&op))) {
       return failure();
     }
+  }
+
+  if (failed(updateForwardReferences())) {
+    return failure();
   }
   return success();
 }
@@ -517,7 +540,67 @@ Serializer::processMemberDecoration(uint32_t structID, uint32_t memberIndex,
   return encodeInstructionInto(decorations, spirv::Opcode::OpMemberDecorate,
                                args);
 }
+
+LogicalResult Serializer::updateForwardReferences() {
+  for (const auto &forwardRef : forwardReferences) {
+    auto funcID = findFunctionID(forwardRef.first);
+    if (!funcID) {
+      return failure();
+    }
+    // OpFunctionCall opcode | resut type id | result id | function id | args
+    if (failed(updateWord(functions, forwardRef.second, 3, funcID))) {
+      return failure();
+    }
+  }
+  return success();
+}
 } // namespace
+
+LogicalResult Serializer::processFunctionCallOp(spirv::FunctionCallOp op) {
+  auto funcAttrSymbolRef = op.getAttrOfType<SymbolRefAttr>("callee");
+  if (!funcAttrSymbolRef) {
+    return op.emitError("requires a 'callee' symbol reference attribute");
+  }
+  auto funcName = funcAttrSymbolRef.getValue();
+  auto funcID = findFunctionID(funcName);
+
+  SmallVector<uint32_t, 4> operands;
+  auto funcCallID = getNextID();
+
+  if (op.getNumResults() > 1) {
+    return op.emitOpError(
+        "cannot serialialize spv.FunctionCall with multiple return types");
+  }
+
+  uint32_t resTypeID = 0;
+  llvm::SmallVector<Type, 1> resultTypes(op.getResultTypes());
+
+  if (failed(processType(op.getLoc(),
+                         (resultTypes.empty() ? getVoidType() : resultTypes[0]),
+                         resTypeID))) {
+    return failure();
+  }
+
+  operands.push_back(resTypeID);
+  operands.push_back(funcCallID);
+  operands.push_back(funcID);
+
+  for (auto *value : op.arguments()) {
+    if (auto valueID = findValueID(value)) {
+      operands.push_back(valueID);
+    } else {
+      return op.emitOpError(
+          "cannot find an id for the spv.FunctionCallOp parameter");
+    }
+  }
+  // The spec allows to invoke FunctionCallOp on a forward reference, but
+  // we cannot generate an instruction without an actual id, which is unknown
+  // at this path. So, encode 0 as function id, save the start index of
+  // encoded instruction, and then update it.
+  forwardReferences.push_back({funcName, functions.size()});
+  return encodeInstructionInto(functions, spirv::Opcode::OpFunctionCall,
+                               operands);
+}
 
 LogicalResult Serializer::processFuncOp(FuncOp op) {
   uint32_t fnTypeID = 0;
@@ -1373,6 +1456,9 @@ LogicalResult Serializer::processOperation(Operation *op) {
   }
   if (auto constOp = dyn_cast<spirv::ConstantOp>(op)) {
     return processConstantOp(constOp);
+  }
+  if (auto funcCallOp = dyn_cast<spirv::FunctionCallOp>(op)) {
+    return processFunctionCallOp(funcCallOp);
   }
   if (auto fnOp = dyn_cast<FuncOp>(op)) {
     return processFuncOp(fnOp);

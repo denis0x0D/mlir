@@ -99,6 +99,9 @@ private:
   /// in the deserializer.
   LogicalResult processExtension(ArrayRef<uint32_t> operands);
 
+  /// Processes SPIR-V function call op.
+  LogicalResult processFunctionCall(ArrayRef<uint32_t> operands);
+
   /// Attaches all collected extensions to `module` as an attribute.
   void attachExtensions();
 
@@ -385,6 +388,9 @@ private:
   // processed.
   SmallVector<std::pair<spirv::Opcode, ArrayRef<uint32_t>>, 4>
       deferedInstructions;
+
+  SmallVector<ArrayRef<uint32_t>, 4> forwardFunctionCalls;
+  DenseMap<uint32_t, OpBuilder::InsertPoint> forwardReferences;
 };
 } // namespace
 
@@ -412,6 +418,12 @@ LogicalResult Deserializer::deserialize() {
 
   assert(curOffset == binarySize &&
          "deserializer should never index beyond the binary end");
+
+  for (const auto &forwardFunctionCall : forwardFunctionCalls) {
+    if (failed(processFunctionCall(forwardFunctionCall))) {
+      return failure();
+    }
+  }
 
   for (auto &defered : deferedInstructions) {
     if (failed(processInstruction(defered.first, defered.second, false))) {
@@ -497,6 +509,72 @@ LogicalResult Deserializer::processExtension(ArrayRef<uint32_t> operands) {
   }
 
   extensions.insert(extName);
+  return success();
+}
+
+LogicalResult Deserializer::processFunctionCall(ArrayRef<uint32_t> operands) {
+  if (operands.size() < 3) {
+    return emitError(unknownLoc,
+                     "OpFunctionCall must have at least 3 operands");
+  }
+
+  Type resultType = getType(operands[0]);
+  if (!resultType) {
+    return emitError(unknownLoc, "undefined result type from <id> ")
+           << operands[0];
+  }
+
+  auto functionID = operands[2];
+  auto funcOp = getFunction(functionID);
+
+  if (!funcOp) {
+    forwardReferences[operands[1]] = opBuilder.saveInsertionPoint();
+    forwardFunctionCalls.push_back(operands);
+    return success();
+  }
+
+  auto functionType = funcOp.getType();
+  const auto numResults = functionType.getNumResults();
+
+  if ((isVoidType(resultType) && numResults) ||
+      (numResults && functionType.getResult(0) != resultType)) {
+    return emitError(unknownLoc, "result type mismatch");
+  }
+
+  auto funcArgs = functionType.getInputs();
+  if (funcArgs.size() != (operands.size() - 3)) {
+    return emitError(unknownLoc, "invalid num operands TODO");
+  }
+
+  auto functionName = nameMap.lookup(functionID).str();
+  if (functionName.empty()) {
+    functionName = "spirv_fn_" + std::to_string(functionID);
+  }
+
+  llvm::SmallVector<Value *, 0> arguments;
+  for (const auto op : llvm::drop_begin(operands, 3)) {
+    // TODO: Check operand types.
+    auto *value = getValue(op);
+    if (!value) {
+      return emitError(unknownLoc, "invalid value TODO");
+    }
+    arguments.push_back(value);
+  }
+
+  OpBuilder::InsertionGuard moduleInsertionGuard(opBuilder);
+
+  if (forwardReferences.count(operands[1])) {
+    auto insertionPoint = forwardReferences[operands[1]];
+    auto insertPoint = insertionPoint.getPoint();
+    auto insertBlock = insertionPoint.getBlock();
+    --insertPoint;
+    opBuilder.setInsertionPoint(insertBlock, insertPoint);
+  }
+
+  // Create and insert spv.FunctionCall
+  opBuilder.create<spirv::FunctionCallOp>(
+      unknownLoc, resultType, opBuilder.getSymbolRefAttr(functionName),
+      arguments);
   return success();
 }
 
@@ -1686,6 +1764,8 @@ LogicalResult Deserializer::processInstruction(spirv::Opcode opcode,
     return processConstantNull(operands);
   case spirv::Opcode::OpDecorate:
     return processDecoration(operands);
+  case spirv::Opcode::OpFunctionCall:
+    return processFunctionCall(operands);
   case spirv::Opcode::OpMemberDecorate:
     return processMemberDecoration(operands);
   case spirv::Opcode::OpFunction:
