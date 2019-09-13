@@ -99,6 +99,9 @@ private:
   /// in the deserializer.
   LogicalResult processExtension(ArrayRef<uint32_t> operands);
 
+  /// Processes SPIR-V function call op.
+  LogicalResult processFunctionCall(ArrayRef<uint32_t> operands);
+
   /// Attaches all collected extensions to `module` as an attribute.
   void attachExtensions();
 
@@ -148,6 +151,14 @@ private:
   spirv::GlobalVariableOp getGlobalVariable(uint32_t id) {
     return globalVariableMap.lookup(id);
   }
+
+  /// Updates the name of a callee function and verifies the function call op
+  /// for each forward call.
+  LogicalResult updateForwardCalls();
+
+  /// Verifies result type of the function.
+  LogicalResult verifyFunctionResultType(Type resultType,
+                                         FunctionType functionType);
 
   //===--------------------------------------------------------------------===//
   // Type
@@ -385,6 +396,9 @@ private:
   // processed.
   SmallVector<std::pair<spirv::Opcode, ArrayRef<uint32_t>>, 4>
       deferedInstructions;
+
+  /// List of function call operations and ids of forwrad function calls.
+  SmallVector<std::pair<spirv::FunctionCallOp, uint32_t>, 4> forwardCalls;
 };
 } // namespace
 
@@ -417,6 +431,10 @@ LogicalResult Deserializer::deserialize() {
     if (failed(processInstruction(defered.first, defered.second, false))) {
       return failure();
     }
+  }
+
+  if (failed(updateForwardCalls())) {
+    return failure();
   }
 
   // Attaches the capabilities/extensions as an attribute to the module.
@@ -497,6 +515,149 @@ LogicalResult Deserializer::processExtension(ArrayRef<uint32_t> operands) {
   }
 
   extensions.insert(extName);
+  return success();
+}
+
+LogicalResult Deserializer::updateForwardCalls() {
+  for (auto &forwardCall : forwardCalls) {
+    auto functionCallOp = forwardCall.first;
+    auto funcOp = getFunction(forwardCall.second);
+    if (!funcOp) {
+      return functionCallOp.emitError(
+                 "cannot find function the forward call from <id> ")
+             << forwardCall.second;
+    }
+
+    SmallVector<Type, 0> resultTypes(functionCallOp.getResultTypes());
+    SmallVector<Type, 0> operandTypes(functionCallOp.getOperandTypes());
+    auto functionType = funcOp.getType();
+
+    if (resultTypes.size() != functionType.getNumResults()) {
+      return functionCallOp.emitError(
+                 "mismatch in function result type for the forward call, "
+                 "expected number of results ")
+             << resultTypes.size() << ", but provided "
+             << functionType.getNumResults();
+    }
+
+    if (resultTypes.size()) {
+      if (resultTypes.front() != functionType.getResult(0)) {
+        return functionCallOp.emitError("mismatch in function result type for "
+                                        "the forward call, expected type ")
+               << resultTypes.front() << ", but provided "
+               << functionType.getResult(0);
+      }
+    }
+
+    if (operandTypes.size() != functionType.getNumInputs()) {
+      return functionCallOp.emitError(
+                 "mismatch in function operands for the "
+                 "forward call, expected number of operands ")
+             << operandTypes.size() << ", but provided "
+             << functionType.getNumInputs();
+    }
+
+    uint32_t index = 0;
+    for (const auto operandType : operandTypes) {
+      if (operandType != functionType.getInput(index)) {
+        return functionCallOp.emitError(
+                   "mismatch in function operand for the forward "
+                   "call, operand with number ")
+               << index << " expected type " << operandType << ", but provided "
+               << functionType.getInput(index);
+      }
+      ++index;
+    }
+
+    // Update calle name for the forward call.
+    functionCallOp.setAttr("callee",
+                           opBuilder.getSymbolRefAttr(funcOp.getName()));
+  }
+  return success();
+}
+
+LogicalResult
+Deserializer::verifyFunctionResultType(Type resultType,
+                                       FunctionType functionType) {
+  if ((isVoidType(resultType) && functionType.getNumResults() != 0) ||
+      (functionType.getNumResults() == 1 &&
+       functionType.getResult(0) != resultType)) {
+    return emitError(unknownLoc, "mismatch in function type ")
+           << functionType << " and return type " << resultType << " specified";
+  }
+  return success();
+}
+
+LogicalResult Deserializer::processFunctionCall(ArrayRef<uint32_t> operands) {
+  if (operands.size() < 3) {
+    return emitError(unknownLoc,
+                     "OpFunctionCall must have at least 3 operands");
+  }
+
+  Type resultType = getType(operands[0]);
+  if (!resultType) {
+    return emitError(unknownLoc, "undefined result type from <id> ")
+           << operands[0];
+  }
+
+  auto functionID = operands[2];
+  bool isForwardCall = false;
+  std::string functionName;
+  auto funcOp = getFunction(functionID);
+
+  if (funcOp) {
+    functionName = funcOp.getName();
+    auto functionType = funcOp.getType();
+    uint32_t index = 0;
+
+    // Verify reult type.
+    if (failed(verifyFunctionResultType(resultType, functionType))) {
+      return failure();
+    }
+
+    // Verify operands.
+    for (const auto op : llvm::drop_begin(operands, 3)) {
+      auto type = getType(op);
+      if (!type || (functionType.getInput(index) != type)) {
+        return emitError(unknownLoc,
+                         "mismatch in argument type between function type "
+                         "definition ")
+               << functionType << " and argument type definition "
+               << " at argument " << index;
+      }
+      ++index;
+    }
+  } else {
+    // This a temporal name of a forward function call and it will be updated.
+    functionName = "spirv_fn_" + std::to_string(functionID);
+    isForwardCall = true;
+  }
+
+  llvm::SmallVector<Value *, 0> arguments;
+  for (const auto op : llvm::drop_begin(operands, 3)) {
+    auto *value = getValue(op);
+    if (!value) {
+      return emitError(unknownLoc, "cannot find ssa value from <id> ")
+             << op << " for spv.FunctionCall";
+    }
+    arguments.push_back(value);
+  }
+
+  SmallVector<Type, 0> resultTypes;
+  if (!isVoidType(resultType)) {
+    // If result type is not `none` put it into result types vector.
+    resultTypes.push_back(resultType);
+  }
+
+  // Create and insert spv.FunctionCall.
+  auto functionCallOp = opBuilder.create<spirv::FunctionCallOp>(
+      unknownLoc, resultTypes, opBuilder.getSymbolRefAttr(functionName),
+      arguments);
+
+  if (isForwardCall) {
+    // Save generated operation and function <id>.
+    forwardCalls.push_back(std::make_pair(functionCallOp, functionID));
+  }
   return success();
 }
 
@@ -630,11 +791,8 @@ LogicalResult Deserializer::processFunction(ArrayRef<uint32_t> operands) {
   }
   auto functionType = fnType.cast<FunctionType>();
 
-  if ((isVoidType(resultType) && functionType.getNumResults() != 0) ||
-      (functionType.getNumResults() == 1 &&
-       functionType.getResult(0) != resultType)) {
-    return emitError(unknownLoc, "mismatch in function type ")
-           << functionType << " and return type " << resultType << " specified";
+  if (failed(verifyFunctionResultType(resultType, functionType))) {
+    return failure();
   }
 
   std::string fnName = nameMap.lookup(operands[1]).str();
@@ -1686,6 +1844,8 @@ LogicalResult Deserializer::processInstruction(spirv::Opcode opcode,
     return processConstantNull(operands);
   case spirv::Opcode::OpDecorate:
     return processDecoration(operands);
+  case spirv::Opcode::OpFunctionCall:
+    return processFunctionCall(operands);
   case spirv::Opcode::OpMemberDecorate:
     return processMemberDecoration(operands);
   case spirv::Opcode::OpFunction:

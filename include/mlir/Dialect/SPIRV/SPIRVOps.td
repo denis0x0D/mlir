@@ -114,6 +114,7 @@ def SPV_AccessChainOp : SPV_Op<"AccessChain", [NoSideEffect]> {
     SPV_AnyPtr:$component_ptr
   );
 
+
   let builders = [OpBuilder<[{Builder *builder, OperationState *state,
                               Value *basePtr, ArrayRef<Value *> indices}]>];
 }
@@ -161,6 +162,7 @@ def SPV_CompositeExtractOp : SPV_Op<"CompositeExtract", [NoSideEffect]> {
     SPV_Type:$component
   );
 
+
   let hasFolder = 1;
 }
 
@@ -205,7 +207,56 @@ def SPV_ExecutionModeOp : SPV_Op<"ExecutionMode", [InModuleScope]> {
 
   let results = (outs);
 
+
   let verifier = [{ return success(); }];
+
+  let autogenSerialization = 0;
+}
+
+// -----
+
+def SPV_FunctionCallOp : SPV_Op<"FunctionCall", []> {
+  let summary = "Call a function.";
+
+  let description = [{
+    Result Type is the type of the return value of the function. It must be
+    the same as the Return Type operand of the Function Type operand of the
+    Function operand.
+
+    Function is an OpFunction instruction.  This could be a forward
+    reference.
+
+    Argument N is the object to copy to parameter N of Function.
+
+    Note: A forward call is possible because there is no missing type
+    information: Result Type must match the Return Type of the function, and
+    the calling argument types must match the formal parameter types.
+
+    ### Custom assembly form
+
+    ``` {.ebnf}
+
+    function-call-op ::= `spv.FunctionCall` function-id `(` ssa-use-list `)`
+                     `:` function-type
+    ```
+
+    For example:
+
+    ```
+    spv.FunctionCall @f_void(%arg0 : (i32) ->  ()
+    %0 = spv.FunctionCall @f_iadd(%arg0, %arg1) : (i32, i32) -> i32
+
+    ```
+  }];
+
+  let arguments = (ins
+    SymbolRefAttr:$callee,
+    Variadic<SPV_Type>:$arguments
+  );
+
+  let results = (outs
+    SPV_Optional<SPV_Type>:$result
+  );
 
   let autogenSerialization = 0;
 }
@@ -256,6 +307,7 @@ def SPV_LoadOp : SPV_Op<"Load", []> {
   let results = (outs
     SPV_Type:$value
   );
+
 }
 
 // -----
@@ -298,6 +350,7 @@ def SPV_StoreOp : SPV_Op<"Store", []> {
   );
 
   let results = (outs);
+
 }
 
 // -----
@@ -355,6 +408,7 @@ def SPV_VariableOp : SPV_Op<"Variable", []> {
   let results = (outs
     SPV_AnyPtr:$pointer
   );
+
 }
 
 // -----

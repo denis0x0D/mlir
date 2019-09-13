@@ -913,6 +913,72 @@ static void print(spirv::ExecutionModeOp execModeOp, OpAsmPrinter *printer) {
 }
 
 //===----------------------------------------------------------------------===//
+// spv.FuncionCall
+//===----------------------------------------------------------------------===//
+
+static ParseResult parseFunctionCallOp(OpAsmParser *parser,
+                                       OperationState *state) {
+  SymbolRefAttr calleeAttr;
+  FunctionType type;
+  SmallVector<OpAsmParser::OperandType, 4> operands;
+  auto loc = parser->getNameLoc();
+  if (parser->parseAttribute(calleeAttr, "callee", state->attributes) ||
+      parser->parseOperandList(operands, OpAsmParser::Delimiter::Paren) ||
+      parser->parseColonType(type)) {
+    return failure();
+  }
+
+  auto funcType = type.dyn_cast<FunctionType>();
+  if (!funcType) {
+    return parser->emitError(loc, "expected function type, but provided ")
+           << type;
+  }
+
+  if (funcType.getNumResults() > 1) {
+    return parser->emitError(
+               loc, "callee function must have 0 or 1 result, but provided ")
+           << funcType.getNumResults();
+  }
+
+  if (parser->addTypesToList(type.getResults(), state->types) ||
+      parser->resolveOperands(operands, type.getInputs(), loc,
+                              state->operands)) {
+    return failure();
+  }
+
+  return success();
+}
+
+static void print(spirv::FunctionCallOp functionCallOp, OpAsmPrinter *printer) {
+  SmallVector<Type, 0> argTypes(functionCallOp.getOperandTypes());
+  SmallVector<Type, 0> resultTypes(functionCallOp.getResultTypes());
+  Type functionType =
+      FunctionType::get(argTypes, resultTypes, functionCallOp.getContext());
+
+  *printer << spirv::FunctionCallOp::getOperationName() << ' '
+           << functionCallOp.getAttr("callee") << '(';
+  printer->printOperands(functionCallOp.arguments());
+  *printer << ") : ";
+  printer->printType(functionType);
+}
+
+static LogicalResult verify(spirv::FunctionCallOp functionCallOp) {
+  auto fnAttr = functionCallOp.getAttrOfType<SymbolRefAttr>("callee");
+  if (!fnAttr) {
+    return functionCallOp.emitOpError(
+        "requires a 'callee' symbol reference attribute");
+  }
+
+  if (functionCallOp.getNumResults() > 1) {
+    return functionCallOp.emitOpError(
+               "callee function expected 0 or 1 result, but provided ")
+           << functionCallOp.getNumResults();
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // spv.globalVariable
 //===----------------------------------------------------------------------===//
 
