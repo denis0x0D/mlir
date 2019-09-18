@@ -227,6 +227,33 @@ static LogicalResult verifyMemoryAccessAttribute(LoadStoreOpTy loadStoreOp) {
   return success();
 }
 
+template <typename BarrierOp>
+static LogicalResult verifyMemorySemantics(BarrierOp op) {
+  auto memorySemantics = op.memory_semantics();
+  SmallVector<spirv::MemorySemantics, 4> memorySemanticsBits{
+      spirv::MemorySemantics::Acquire, spirv::MemorySemantics::Release,
+      spirv::MemorySemantics::AcquireRelease,
+      spirv::MemorySemantics::SequentiallyConsistent};
+
+  uint32_t bitCount = 0;
+  for (auto &memorySemanticsBit : memorySemanticsBits) {
+    bitCount += static_cast<uint32_t>(
+        spirv::bitEnumContains(memorySemantics, memorySemanticsBit));
+  }
+
+  if (!bitCount) {
+    return op.emitError(
+        "expected at least one constraint for the memory order");
+  }
+
+  if (bitCount > 1) {
+    return op.emitError("expected at most one of these four memory constraints "
+                        "to be set: `Acquire`, `Release`,"
+                        "`AcquireRelease` or `SequentiallyConsistent`");
+  }
+  return success();
+}
+
 template <typename LoadStoreOpTy>
 static LogicalResult verifyLoadStorePtrAndValTypes(LoadStoreOpTy op, Value *ptr,
                                                    Value *val) {
@@ -820,6 +847,30 @@ bool spirv::ConstantOp::isBuildableWith(Type type) {
 }
 
 //===----------------------------------------------------------------------===//
+// spv.ControlBarrier
+//===----------------------------------------------------------------------===//
+
+static ParseResult parseControlBarrierOp(OpAsmParser *parser,
+                                         OperationState *state) {
+  spirv::ExecutionScope executionScope;
+  spirv::MemoryScope memoryScope;
+  spirv::MemorySemantics memorySemantics;
+
+  return failure(parseEnumAttribute(executionScope, parser, state) ||
+                 parser->parseComma() ||
+                 parseEnumAttribute(memoryScope, parser, state) ||
+                 parser->parseComma() ||
+                 parseEnumAttribute(memorySemantics, parser, state));
+}
+
+static void print(spirv::ControlBarrierOp op, OpAsmPrinter *printer) {
+  *printer << spirv::ControlBarrierOp::getOperationName() << " \""
+           << stringifyExecutionScope(op.execution_scope()) << "\", \""
+           << stringifyMemoryScope(op.memory_scope()) << "\", \""
+           << stringifyMemorySemantics(op.memory_semantics()) << "\"";
+}
+
+//===----------------------------------------------------------------------===//
 // spv.EntryPoint
 //===----------------------------------------------------------------------===//
 
@@ -1333,6 +1384,26 @@ static LogicalResult verify(spirv::MergeOp mergeOp) {
     return mergeOp.emitOpError(
         "can only be used in the last block of 'spv.loop'");
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// spv.MemoryBarrier
+//===----------------------------------------------------------------------===//
+
+static ParseResult parseMemoryBarrierOp(OpAsmParser *parser,
+                                        OperationState *state) {
+  spirv::MemoryScope memoryScope;
+  spirv::MemorySemantics memorySemantics;
+
+  return failure(parseEnumAttribute(memoryScope, parser, state) ||
+                 parser->parseComma() ||
+                 parseEnumAttribute(memorySemantics, parser, state));
+}
+
+static void print(spirv::MemoryBarrierOp op, OpAsmPrinter *printer) {
+  *printer << spirv::MemoryBarrierOp::getOperationName() << " \""
+           << stringifyMemoryScope(op.memory_scope()) << "\", \""
+           << stringifyMemorySemantics(op.memory_semantics()) << "\"";
 }
 
 //===----------------------------------------------------------------------===//

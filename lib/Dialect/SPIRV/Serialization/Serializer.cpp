@@ -1497,6 +1497,25 @@ Serializer::processOp<spirv::EntryPointOp>(spirv::EntryPointOp op) {
 
 template <>
 LogicalResult
+Serializer::processOp<spirv::ControlBarrierOp>(spirv::ControlBarrierOp op) {
+  auto loc = op.getLoc();
+  SmallVector<uint32_t, 3> operands;
+  auto executionScopeIntAttr = op.getAttrOfType<IntegerAttr>(
+      spirv::attributeName<spirv::ExecutionScope>());
+  auto memoryScopeIntAttr =
+      op.getAttrOfType<IntegerAttr>(spirv::attributeName<spirv::MemoryScope>());
+  auto memorySemanticsIntAttr = op.getAttrOfType<IntegerAttr>(
+      spirv::attributeName<spirv::MemorySemantics>());
+
+  operands.push_back(prepareConstantInt(loc, executionScopeIntAttr));
+  operands.push_back(prepareConstantInt(loc, memoryScopeIntAttr));
+  operands.push_back(prepareConstantInt(loc, memorySemanticsIntAttr));
+  return encodeInstructionInto(functions, spirv::Opcode::OpControlBarrier,
+                               operands);
+}
+
+template <>
+LogicalResult
 Serializer::processOp<spirv::ExecutionModeOp>(spirv::ExecutionModeOp op) {
   SmallVector<uint32_t, 4> operands;
   // Add the function <id>.
@@ -1520,6 +1539,22 @@ Serializer::processOp<spirv::ExecutionModeOp>(spirv::ExecutionModeOp op) {
     }
   }
   return encodeInstructionInto(executionModes, spirv::Opcode::OpExecutionMode,
+                               operands);
+}
+
+template <>
+LogicalResult
+Serializer::processOp<spirv::MemoryBarrierOp>(spirv::MemoryBarrierOp op) {
+  auto loc = op.getLoc();
+  SmallVector<uint32_t, 2> operands;
+  auto memoryScopeIntAttr =
+      op.getAttrOfType<IntegerAttr>(spirv::attributeName<spirv::MemoryScope>());
+  auto memorySemanticsIntAttr = op.getAttrOfType<IntegerAttr>(
+      spirv::attributeName<spirv::MemorySemantics>());
+
+  operands.push_back(prepareConstantInt(loc, memoryScopeIntAttr));
+  operands.push_back(prepareConstantInt(loc, memorySemanticsIntAttr));
+  return encodeInstructionInto(functions, spirv::Opcode::OpMemoryBarrier,
                                operands);
 }
 

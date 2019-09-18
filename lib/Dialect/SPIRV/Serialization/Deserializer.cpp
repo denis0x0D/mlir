@@ -1868,6 +1868,61 @@ Deserializer::processOp<spirv::ExecutionModeOp>(ArrayRef<uint32_t> words) {
 
 template <>
 LogicalResult
+Deserializer::processOp<spirv::ControlBarrierOp>(ArrayRef<uint32_t> operands) {
+  if (operands.size() != 3) {
+    return emitError(
+        unknownLoc,
+        "OpControlBarrier must have execution scope <id>, memory scope <id> "
+        "and memory semantics <id>");
+  }
+  const auto executionScopeID = operands[0];
+  const auto memoryScopeID = operands[1];
+  const auto memorySemanticsID = operands[2];
+
+  auto executionScopeInfo = getConstant(executionScopeID);
+  if (!executionScopeInfo) {
+    return emitError(unknownLoc, "OpControlBarrier execution scope <id> ")
+           << executionScopeID << " must come from a normal constant";
+  }
+  auto executionScope = executionScopeInfo->first.dyn_cast<IntegerAttr>();
+  if (!executionScope) {
+    return emitError(unknownLoc,
+                     "expected 32 bit integer constant for execution "
+                     "scope <id> ")
+           << executionScopeID << " in OpControlBarrier";
+  }
+
+  auto memoryScopeInfo = getConstant(memoryScopeID);
+  if (!memoryScopeInfo) {
+    return emitError(unknownLoc, "OpControlBarrier memory scope <id> ")
+           << memoryScopeID << " must come from a normal constant";
+  }
+  auto memoryScope = memoryScopeInfo->first.dyn_cast<IntegerAttr>();
+  if (!memoryScope) {
+    return emitError(unknownLoc, "expected 32 bit integer constant for memory "
+                                 "scope <id> ")
+           << memoryScopeID << " in OpControlBarrier";
+  }
+
+  auto memorySemanticsInfo = getConstant(memorySemanticsID);
+  if (!memorySemanticsInfo) {
+    return emitError(unknownLoc, "OpControlBarrier memory semantics <id> ")
+           << memorySemanticsID << " must come from a normal constant";
+  }
+  auto memorySemantics = memorySemanticsInfo->first.dyn_cast<IntegerAttr>();
+  if (!memorySemantics) {
+    return emitError(unknownLoc, "expected 32 bit integer constant for memory "
+                                 "semantics <id> ")
+           << memorySemanticsID << " in OpControlBarrier";
+  }
+
+  opBuilder.create<spirv::ControlBarrierOp>(unknownLoc, executionScope,
+                                            memoryScope, memorySemantics);
+  return success();
+}
+
+template <>
+LogicalResult
 Deserializer::processOp<spirv::FunctionCallOp>(ArrayRef<uint32_t> operands) {
   if (operands.size() < 3) {
     return emitError(unknownLoc,
@@ -1907,6 +1962,46 @@ Deserializer::processOp<spirv::FunctionCallOp>(ArrayRef<uint32_t> operands) {
   if (!resultTypes.empty()) {
     valueMap[resultID] = opFunctionCall.getResult(0);
   }
+  return success();
+}
+
+template <>
+LogicalResult
+Deserializer::processOp<spirv::MemoryBarrierOp>(ArrayRef<uint32_t> operands) {
+  if (operands.size() != 2) {
+    return emitError(unknownLoc, "OpMemoryBarrier must have memory scope <id> "
+                                 "and memory semantics <id>");
+  }
+  const auto memoryScopeID = operands[0];
+  const auto memorySemanticsID = operands[1];
+
+  auto memoryScopeInfo = getConstant(memoryScopeID);
+  if (!memoryScopeInfo) {
+    return emitError(unknownLoc, "OpMemoryBarrier memory scope <id> ")
+           << memoryScopeID << " must come from a normal constant";
+  }
+  auto memoryScope = memoryScopeInfo->first.dyn_cast<IntegerAttr>();
+  if (!memoryScope) {
+    return emitError(unknownLoc, "expected 32 bit integer constant for memory "
+                                 "scope <id> ")
+           << memoryScopeID << " in OpMemoryBarrier";
+  }
+
+  auto memorySemanticsInfo = getConstant(memorySemanticsID);
+  if (!memorySemanticsInfo) {
+    return emitError(unknownLoc, "OpMemoryBarrier memory semantics <id> ")
+           << memorySemanticsID << " must come from a normal constant";
+  }
+  auto memorySemantics =
+      memorySemanticsInfo->first.dyn_cast<IntegerAttr>();
+  if (!memorySemantics) {
+    return emitError(unknownLoc, "expected 32 bit integer constant for memory "
+                                 "semantics <id> ")
+           << memorySemanticsID << " in OpMemoryBarrier";
+  }
+
+  opBuilder.create<spirv::MemoryBarrierOp>(unknownLoc, memoryScope,
+                                           memorySemantics);
   return success();
 }
 
