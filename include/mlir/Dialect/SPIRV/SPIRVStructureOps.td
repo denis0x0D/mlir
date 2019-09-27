@@ -234,6 +234,16 @@ def SPV_GlobalVariableOp : SPV_Op<"globalVariable", [InModuleScope]> {
     OptionalAttr<SymbolRefAttr>:$initializer
   );
 
+  let builders = [
+    OpBuilder<"Builder *builder, OperationState &state, "
+      "TypeAttr type, ArrayRef<NamedAttribute> namedAttrs", [{
+      state.addAttribute("type", type);
+      for (const auto &namedAttr : namedAttrs) {
+        state.addAttribute(namedAttr.first, namedAttr.second);
+      }
+    }]>
+  ];
+
   let results = (outs);
 
   let hasOpcode = 0;

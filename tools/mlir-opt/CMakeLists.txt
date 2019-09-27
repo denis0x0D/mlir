@@ -37,6 +37,7 @@ set(LIBS
   MLIRROCDLIR
   MLIRSPIRV
   MLIRSPIRVConversion
+  MLIRSPIRVTransforms
   MLIRStandardOps
   MLIRStandardToLLVM
   MLIRTransforms
