@@ -36,6 +36,9 @@ public:
   /// Checks if the given `type` is valid in SPIR-V dialect.
   static bool isValidType(Type type);
 
+  /// Checks if the given `scalar type` is valid in SPIR-V dialect.
+  static bool isValidSPIRVScalarType(Type type);
+
   /// Parses a type registered to this dialect.
   Type parseType(llvm::StringRef spec, Location loc) const override;
 
