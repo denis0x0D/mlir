@@ -91,7 +91,7 @@ static bool isValidSPIRVIntType(IntegerType type) {
                             type.getWidth());
 }
 
-static bool isValidSPIRVScalarType(Type type) {
+bool SPIRVDialect::isValidSPIRVScalarType(Type type) {
   if (type.isa<FloatType>()) {
     return !type.isBF16();
   }
@@ -102,7 +102,8 @@ static bool isValidSPIRVScalarType(Type type) {
 }
 
 static bool isValidSPIRVVectorType(VectorType type) {
-  return type.getRank() == 1 && isValidSPIRVScalarType(type.getElementType()) &&
+  return type.getRank() == 1 &&
+         SPIRVDialect::isValidSPIRVScalarType(type.getElementType()) &&
          type.getNumElements() >= 2 && type.getNumElements() <= 4;
 }
 
@@ -112,7 +113,7 @@ bool SPIRVDialect::isValidType(Type type) {
       type.getKind() <= TypeKind::LAST_SPIRV_TYPE) {
     return true;
   }
-  if (isValidSPIRVScalarType(type)) {
+  if (SPIRVDialect::isValidSPIRVScalarType(type)) {
     return true;
   }
   if (auto vectorType = type.dyn_cast<VectorType>()) {
