@@ -1944,28 +1944,24 @@ namespace {
 // Blocks from the given `spv.selection` operation must satisfy the following
 // layout:
 //
-//       +---------------------------------------------+
-//       | <header block>                              |
-//       | svp.BranchConditional %cond, ^case0, ^case1 |
-//       +---------------------------------------------+
-//         |                    |
-//         |                    v
-//         |         +-------------------------+
-//         |         | <case0>                 |
-//         |         | spv.Store %ptr %value0  |
-//         |         | spv.Branch ^merge       |---|
-//         |         +-------------------------+   |
-//         |                                       |
-//         |         +-------------------------+   |
-//         |-------->| <case1>                 |   |
-//                   | spv.Store %ptr %value1  |   |
-//                   | spv.Branch ^merge       |   |
-//                   +-------------------------+   |
-//                              |                  |
-//                              v                  |
-//                       +---------------+         |
-//                       |    <merge>    |<--------|
-//                       +---------------+
+//                   +--------------+
+//                   | header block |
+//                   +--------------+
+//                        /   \
+//                         ...
+//
+//
+//               +---------+   +---------+
+//               | case #0 |   | case #1 |
+//               +---------+   +---------+
+//
+//
+//                         ...
+//                        \   /
+//                          v
+//                   +-------------+
+//                   | merge block |
+//                   +-------------+
 //
 struct SelectionOpCanonicalizer : public OpRewritePattern<spirv::SelectionOp> {
   using OpRewritePattern<spirv::SelectionOp>::OpRewritePattern;
@@ -1997,22 +1993,21 @@ struct SelectionOpCanonicalizer : public OpRewritePattern<spirv::SelectionOp> {
     auto *falseBlock = brConditionalOp.getSuccessor(1);
     auto *mergeBlock = selectionOp.getMergeBlock();
 
-    if (!canCanonicalizeSelection(trueBlock, falseBlock, mergeBlock)) {
+    if (!onlyContainsBranchConditionalOp(trueBlock, falseBlock, mergeBlock)) {
       return matchFailure();
     }
 
     auto *trueValue = getSrcValue(trueBlock);
     auto *falseValue = getSrcValue(falseBlock);
-    auto *ptrValue = getDstValue(trueBlock);
-    auto memoryAccessAttributes =
-        getMemoryAccessAttributes(cast<spirv::StoreOp>(trueBlock->front()));
+    auto *ptrValue = getDstPtr(trueBlock);
+    auto storeOpAttributes =
+        cast<spirv::StoreOp>(trueBlock->front()).getOperation()->getAttrs();
 
     auto selectOp = rewriter.create<spirv::SelectOp>(
         selectionOp.getLoc(), trueValue->getType(), brConditionalOp.condition(),
         trueValue, falseValue);
-    rewriter.create<spirv::StoreOp>(
-        selectOp.getLoc(), ptrValue, selectOp.getResult(),
-        memoryAccessAttributes.first, memoryAccessAttributes.second);
+    rewriter.create<spirv::StoreOp>(selectOp.getLoc(), ptrValue,
+                                    selectOp.getResult(), storeOpAttributes);
 
     // `spv.selection` is not needed anymore.
     rewriter.replaceOp(op, llvm::None);
@@ -2022,26 +2017,29 @@ struct SelectionOpCanonicalizer : public OpRewritePattern<spirv::SelectionOp> {
 private:
   // Checks that given blocks follow the following rules:
   // 1. Each conditional block consists of two operations, the first operation
-  // is a `spv.Store` and the last operation is a `spv.Branch`.
+  //    is a `spv.Store` and the last operation is a `spv.Branch`.
   // 2. Each `spv.Store` uses the same pointer and the same memory attributes.
   // 3. A control flow goes into the given merge block from the given
-  // conditional blocks.
-  PatternMatchResult canCanonicalizeSelection(Block *trueBlock,
-                                              Block *falseBlock,
-                                              Block *mergeBlock) const;
+  //    conditional blocks.
+  PatternMatchResult onlyContainsBranchConditionalOp(Block *trueBlock,
+                                                     Block *falseBlock,
+                                                     Block *mergeBlock) const;
 
   bool isBranchConditional(Block *block) const {
     return std::next(block->begin()) == block->end() &&
            isa<spirv::BranchConditionalOp>(block->front());
   }
 
-  bool isSameMemoryAccessAttributes(spirv::StoreOp lhs,
-                                    spirv::StoreOp rhs) const {
-    return (lhs.memory_access() == rhs.memory_access()) &&
-           (lhs.alignment() == rhs.alignment());
+  bool isSameAttrList(spirv::StoreOp lhs, spirv::StoreOp rhs) const {
+    return lhs.getOperation()->getAttrList().getDictionary() ==
+           rhs.getOperation()->getAttrList().getDictionary();
   }
 
   // Checks that given type is valid for `spv.SelectOp`.
+  // According to SPIR-V spec:
+  // "Before version 1.4, Result Type must be a pointer, scalar, or vector.
+  // Starting with version 1.4, Result Type can additionally be a composite type
+  // other than a vector."
   bool isValidType(Type type) const {
     return spirv::SPIRVDialect::isValidScalarType(type) ||
            type.isa<VectorType>();
@@ -2054,17 +2052,13 @@ private:
   }
 
   // Returns a destination value for the given block.
-  Value *getDstValue(Block *block) const {
+  Value *getDstPtr(Block *block) const {
     auto storeOp = cast<spirv::StoreOp>(block->front());
     return storeOp.ptr();
   }
-
-  // Returns a pair of memory access attributes for the given `spv.Store`.
-  std::pair<IntegerAttr, IntegerAttr>
-  getMemoryAccessAttributes(spirv::StoreOp storeOp) const;
 };
 
-PatternMatchResult SelectionOpCanonicalizer::canCanonicalizeSelection(
+PatternMatchResult SelectionOpCanonicalizer::onlyContainsBranchConditionalOp(
     Block *trueBlock, Block *falseBlock, Block *mergeBlock) const {
   // Each block must consists of 2 operations.
   if ((std::distance(trueBlock->begin(), trueBlock->end()) != 2) ||
@@ -2072,62 +2066,32 @@ PatternMatchResult SelectionOpCanonicalizer::canCanonicalizeSelection(
     return matchFailure();
   }
 
-  auto storeOpTrueBlock = dyn_cast<spirv::StoreOp>(trueBlock->front());
-  if (!storeOpTrueBlock) {
-    return matchFailure();
-  }
+  auto trueBrStoreOp = dyn_cast<spirv::StoreOp>(trueBlock->front());
+  auto trueBrBranchOp =
+      dyn_cast<spirv::BranchOp>(*std::next(trueBlock->begin()));
+  auto falseBrStoreOp = dyn_cast<spirv::StoreOp>(falseBlock->front());
+  auto falseBrBranchOp =
+      dyn_cast<spirv::BranchOp>(*std::next(falseBlock->begin()));
 
-  auto brOpTrueBlock =
-      dyn_cast<spirv::BranchOp>(*std::next(trueBlock->begin(), 1));
-  if (!brOpTrueBlock) {
-    return matchFailure();
-  }
-
-  auto storeOpFalseBlock = cast<spirv::StoreOp>(falseBlock->front());
-  if (!storeOpFalseBlock) {
-    return matchFailure();
-  }
-
-  auto brOpFalseBlock =
-      dyn_cast<spirv::BranchOp>(*std::next(falseBlock->begin(), 1));
-  if (!brOpFalseBlock) {
+  if (!trueBrStoreOp || !trueBrBranchOp || !falseBrStoreOp ||
+      !falseBrBranchOp) {
     return matchFailure();
   }
 
   // Check that each `spv.Store` uses the same pointer, memory access
   // attributes and a valid type of the value.
-  if ((storeOpTrueBlock.ptr() != storeOpFalseBlock.ptr()) ||
-      !isSameMemoryAccessAttributes(storeOpTrueBlock, storeOpFalseBlock) ||
-      !isValidType(storeOpTrueBlock.value()->getType())) {
+  if ((trueBrStoreOp.ptr() != falseBrStoreOp.ptr()) ||
+      !isSameAttrList(trueBrStoreOp, falseBrStoreOp) ||
+      !isValidType(trueBrStoreOp.value()->getType())) {
     return matchFailure();
   }
 
-  if ((brOpTrueBlock.getOperation()->getSuccessor(0) != mergeBlock) ||
-      (brOpFalseBlock.getOperation()->getSuccessor(0) != mergeBlock)) {
+  if ((trueBrBranchOp.getOperation()->getSuccessor(0) != mergeBlock) ||
+      (falseBrBranchOp.getOperation()->getSuccessor(0) != mergeBlock)) {
     return matchFailure();
   }
 
   return matchSuccess();
-}
-
-std::pair<IntegerAttr, IntegerAttr>
-SelectionOpCanonicalizer::getMemoryAccessAttributes(
-    spirv::StoreOp storeOp) const {
-  std::pair<IntegerAttr, IntegerAttr> result;
-  auto memAccessAttr =
-      storeOp.getAttr(spirv::attributeName<spirv::MemoryAccess>());
-
-  if (memAccessAttr) {
-    auto memAccessIntAttr = memAccessAttr.cast<IntegerAttr>();
-    result.first = memAccessIntAttr;
-    auto memAccessValue =
-        spirv::symbolizeMemoryAccess(memAccessIntAttr.getInt());
-    if (spirv::bitEnumContains(*memAccessValue, spirv::MemoryAccess::Aligned)) {
-      result.second = storeOp.getAttr(kAlignmentAttrName).cast<IntegerAttr>();
-    }
-  }
-
-  return result;
 }
 } // namespace
 
