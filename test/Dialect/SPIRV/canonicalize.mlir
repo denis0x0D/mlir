@@ -1,6 +1,112 @@
 // RUN: mlir-opt %s -split-input-file -canonicalize | FileCheck %s
 
 //===----------------------------------------------------------------------===//
+// spv.AccsessChain
+//===----------------------------------------------------------------------===//
+
+func @access_chain_canonicalization_full_0() -> f32 {
+  // CHECK: %[[INDEX_0:.*]] = spv.constant 0 : i32
+  // CHECK-NEXT: %[[COMPOSITE:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_0:.*]] = spv.AccessChain %[[COMPOSITE]][%[[INDEX_0]], %[[INDEX_0]], %[[INDEX_0]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[RESULT:.*]] = spv.Load "Function" %[[COMPONENT_0]] : f32
+  // CHECK-NEXT: spv.ReturnValue %[[RESULT]] : f32
+  %c0 = spv.constant 0: i32
+  %0 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %1 = spv.AccessChain %0[%c0] : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %2 = spv.AccessChain %1[%c0] : !spv.ptr<!spv.array<4x!spv.array<4xf32>>, Function>
+  %3 = spv.AccessChain %2[%c0] : !spv.ptr<!spv.array<4xf32>, Function>
+  %5 = spv.Load "Function" %3 : f32
+  spv.ReturnValue %5 : f32
+}
+
+// -----
+
+func @access_chain_canonicalization_full_1() -> i32 {
+  // CHECK: %[[INDEX_0:.*]] = spv.constant 0 : i32
+  // CHECK-NEXT: %[[INDEX_1:.*]] = spv.constant 1 : i32
+  // CHECK-NEXT: %[[COMPOSITE:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.struct<!spv.array<4 x i32>>>>, Function>
+  // CHECK-NEXT: %[[COMPONENT:.*]] = spv.AccessChain %[[COMPOSITE]][%[[INDEX_0]], %[[INDEX_1]], %[[INDEX_0]], %[[INDEX_1]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.struct<!spv.array<4 x i32>>>>, Function>
+  // CHECK-NEXT: %[[RESULT:.*]] = spv.Load "Function" %[[COMPONENT]] : i32
+  // CHECK-NEXT: spv.ReturnValue %[[RESULT]] : i32
+  %c0 = spv.constant 0: i32
+  %c1 = spv.constant 1: i32
+  %0 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.struct<!spv.array<4xi32>>>>, Function>
+  %1 = spv.AccessChain %0[%c0, %c1] : !spv.ptr<!spv.struct<!spv.array<4x!spv.struct<!spv.array<4xi32>>>>, Function>
+  %2 = spv.AccessChain %1[%c0, %c1] : !spv.ptr<!spv.struct<!spv.array<4xi32>>, Function>
+  %3 = spv.Load "Function" %2 : i32
+  spv.ReturnValue %3 : i32
+}
+
+// -----
+
+// The result of the second `spv.AccessChain` operation has two uses and therefore cannot be combined with the third.
+func @access_chain_canonicalization_partial() -> !spv.array<4xf32> {
+  // CHECK: %[[INDEX_0:.*]] = spv.constant 0 : i32
+  // CHECK-NEXT: %[[COMPOSITE:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_0:.*]] = spv.AccessChain %[[COMPOSITE]][%[[INDEX_0]], %[[INDEX_0]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_1:.*]] = spv.AccessChain %[[COMPONENT_0]][%[[INDEX_0]]] : !spv.ptr<!spv.array<4 x f32>, Function>
+  // CHECK-NEXT: %[[RESULT:.*]] = spv.Load "Function" %[[COMPONENT_0]] : !spv.array<4 x f32>
+  // CHECK-NEXT: %{{.*}} = spv.Load "Function" %[[COMPONENT_1]] : f32
+  // CHECK-NEXT: spv.ReturnValue %[[RESULT]] : !spv.array<4 x f32>
+  %c0 = spv.constant 0: i32
+  %0 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %1 = spv.AccessChain %0[%c0] : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %2 = spv.AccessChain %1[%c0] : !spv.ptr<!spv.array<4x!spv.array<4xf32>>, Function>
+  %3 = spv.AccessChain %2[%c0] : !spv.ptr<!spv.array<4xf32>, Function>
+  %4 = spv.Load "Function" %2 : !spv.array<4xf32>
+  %5 = spv.Load "Function" %3 : f32
+  spv.ReturnValue %4: !spv.array<4xf32>
+}
+
+// -----
+
+// Each result of the first two `spv.AccessChain` operations has more than one use.
+func @cannot_canonicalize_access_chain_0() -> f32 {
+  // CHECK: %[[INDEX_0:.*]] = spv.constant 0 : i32
+  // CHECK-NEXT: %[[COMPOSITE:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_0:.*]] = spv.AccessChain %[[COMPOSITE]][%[[INDEX_0]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_1:.*]] = spv.AccessChain %[[COMPONENT_0]][%[[INDEX_0]]] : !spv.ptr<!spv.array<4 x !spv.array<4 x f32>>, Function>
+  // CHECK-NEXT: %[[COMPONENT_2:.*]] = spv.AccessChain %[[COMPONENT_1]][%[[INDEX_0]]] : !spv.ptr<!spv.array<4 x f32>, Function>
+  // CHECK-NEXT: {{%.*}} = spv.Load "Function" %[[COMPONENT_0]] : !spv.array<4 x !spv.array<4 x f32>>
+  // CHECK-NEXT: {{%.*}} = spv.Load "Function" %[[COMPONENT_1]] : !spv.array<4 x f32>
+  // CHECK-NEXT: %[[RESULT:.*]] = spv.Load "Function" %[[COMPONENT_2]] : f32
+  // CHECK-NEXT: spv.ReturnValue %[[RESULT]] : f32
+  %c0 = spv.constant 0: i32
+  %0 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %1 = spv.AccessChain %0[%c0] : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %2 = spv.AccessChain %1[%c0] : !spv.ptr<!spv.array<4x!spv.array<4xf32>>, Function>
+  %3 = spv.AccessChain %2[%c0] : !spv.ptr<!spv.array<4xf32>, Function>
+  %4 = spv.Load "Function" %1 : !spv.array<4x!spv.array<4xf32>>
+  %5 = spv.Load "Function" %2 : !spv.array<4xf32>
+  %6 = spv.Load "Function" %3 : f32
+  spv.ReturnValue %6: f32
+}
+
+// -----
+
+// Not a chained accesses.
+func @cannot_canonicalize_access_chain_1() -> !spv.array<4xi32> {
+  // CHECK: %[[INDEX_1:.*]] = spv.constant 1 : i32
+  // CHECK-NEXT: %[[COMPOSITE_0:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPOSITE_1:.*]] = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPOSITE_0_COMPONENT_0:.*]] = spv.AccessChain %[[COMPOSITE_0]][%[[INDEX_1]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[COMPOSITE_1_COMPONENT_0:.*]] = spv.AccessChain %[[COMPOSITE_1]][%[[INDEX_1]]] : !spv.ptr<!spv.struct<!spv.array<4 x !spv.array<4 x f32>>, !spv.array<4 x i32>>, Function>
+  // CHECK-NEXT: %[[RESULT_0:.*]] = spv.Load "Function" %[[COMPOSITE_0_COMPONENT_0]] : !spv.array<4 x i32>
+  // CHECK-NEXT: %[[RESULT_1:.*]] = spv.Load "Function" %[[COMPOSITE_1_COMPONENT_0]] : !spv.array<4 x i32>
+  // CHECK-NEXT: spv.ReturnValue %[[RESULT_0]] : !spv.array<4 x i32>
+  %c1 = spv.constant 1: i32
+  %0 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %1 = spv.Variable : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %2 = spv.AccessChain %0[%c1] : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %3 = spv.AccessChain %1[%c1] : !spv.ptr<!spv.struct<!spv.array<4x!spv.array<4xf32>>, !spv.array<4xi32>>, Function>
+  %4 = spv.Load "Function" %2 : !spv.array<4xi32>
+  %5 = spv.Load "Function" %3 : !spv.array<4xi32>
+  spv.ReturnValue %4 : !spv.array<4xi32>
+}
+
+// -----
+
+//===----------------------------------------------------------------------===//
 // spv.CompositeExtract
 //===----------------------------------------------------------------------===//
 

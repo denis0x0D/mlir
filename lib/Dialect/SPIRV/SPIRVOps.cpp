@@ -544,6 +544,62 @@ static LogicalResult verify(spirv::AccessChainOp accessChainOp) {
   return success();
 }
 
+namespace {
+
+// Combine chained `spirv::AccessChainOp` operations into one
+// `spirv::AccessChainOp` operation. The current approach is based on analyzing
+// only two operations at once: the current `spirv::AccessChainOp` and an
+// operation immediately following the current operation.
+struct AccessChainOpCanonicalizer
+    : public OpRewritePattern<spirv::AccessChainOp> {
+  using OpRewritePattern<spirv::AccessChainOp>::OpRewritePattern;
+
+  PatternMatchResult matchAndRewrite(spirv::AccessChainOp accessChainOp,
+                                     PatternRewriter &rewriter) const override {
+    // It is safe to look at the next operation from the current insertion
+    // point, because each block must have a terminator operation.
+    auto nextAccessChainOp = dyn_cast<spirv::AccessChainOp>(
+        *std::next(rewriter.getInsertionPoint()));
+
+    if (!nextAccessChainOp ||
+        !canCanonicalizeChainedAccesses(accessChainOp, nextAccessChainOp)) {
+      return matchFailure();
+    }
+    // Combine indices.
+    llvm::SmallVector<Value *, 4> indices(accessChainOp.indices());
+    indices.insert(indices.end(), nextAccessChainOp.indices().begin(),
+                   nextAccessChainOp.indices().end());
+
+    // Replace `nextAccessChainOp` with newly created `spirv::AccessChainOp`.
+    rewriter.replaceOpWithNewOp<spirv::AccessChainOp>(
+        nextAccessChainOp, accessChainOp.base_ptr(), indices);
+    // The given `accessChainOp` has no uses and must be eliminated.
+    rewriter.eraseOp(accessChainOp);
+
+    return matchSuccess();
+  }
+
+private:
+  // Returns true if the result of the given `currentOp` has only one use and
+  // that use is performed by the given `nextOp`.
+  bool canCanonicalizeChainedAccesses(spirv::AccessChainOp currentOp,
+                                      spirv::AccessChainOp nextOp) const;
+};
+
+bool AccessChainOpCanonicalizer::canCanonicalizeChainedAccesses(
+    spirv::AccessChainOp currentOp, spirv::AccessChainOp nextOp) const {
+  auto *currentOpResultValue = currentOp.component_ptr();
+  const auto useCount = std::distance(currentOpResultValue->getUses().begin(),
+                                      currentOpResultValue->getUses().end());
+  return (useCount == 1) && (currentOpResultValue == nextOp.base_ptr());
+}
+} // namespace
+
+void spirv::AccessChainOp::getCanonicalizationPatterns(
+    OwningRewritePatternList &results, MLIRContext *context) {
+  results.insert<AccessChainOpCanonicalizer>(context);
+}
+
 //===----------------------------------------------------------------------===//
 // spv._address_of
 //===----------------------------------------------------------------------===//
